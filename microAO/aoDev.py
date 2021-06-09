@@ -301,6 +301,10 @@ class AdaptiveOpticsDevice(Device):
     def get_system_flat(self):
         return self.flat_actuators_sys
 
+    @Pyro4.expose
+    def set_remotez_cal(self,axis,zcal):
+        self.ao_element.set_zCal(axis,zcal)
+    
     # This method is used for AO elements such as DMs which have actuators which require direct signal values to be set.
     @Pyro4.expose
     def send(self, values):

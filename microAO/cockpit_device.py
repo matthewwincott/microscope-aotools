@@ -709,6 +709,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         try:
             self.remotezCal = np.asarray(userConfig.getValue("remotez_Calibration"))
+            self.proxy.set_remotez_cal('Z',zcal)
             
         except Exception:
             pass
@@ -838,6 +839,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         zStage.moveAbsolute(startpos)
         #store calibartion on remote device
         self.remotezCal = zcal
+        self.proxy.set_remotez_cal('Z',zcal)
         #store cal for retreval on restart
         userConfig.setValue(
             "remotez_Calibration", np.ndarray.tolist(zcal))
