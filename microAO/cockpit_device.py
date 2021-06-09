@@ -709,7 +709,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         try:
             self.remotezCal = np.asarray(userConfig.getValue("remotez_Calibration"))
-            self.proxy.set_remotez_cal('Z',zcal)
+            self.proxy.set_remotez_cal('Z',self.remotezCal)
             
         except Exception:
             pass
@@ -819,8 +819,11 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         return sys_flat_values, best_z_amps_corrected
 
     #function to calibrate the remote focus 
-    def calibrate_remote_z(self, zStage, limits = (-10,10), step = 2.0,
+    def calibrate_remote_z(self, zStage=None, limits = (-10,10), step = 2.0,
                            zmodelist=[3,10]):
+        #set default zstage to be as defined in config file
+        if zStage==None and self.calZStage:
+            zStage=self.calZSatge.getHandlers()[0]
         numsteps = 1+int((limits[1]-limits[0])/step)
         #modes to utilise, be defualt defocus and 1st order spherical
         z_modes=np.zeros(self.no_actuators)
