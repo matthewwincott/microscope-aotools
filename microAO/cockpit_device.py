@@ -707,6 +707,15 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         except Exception:
             pass
 
+        try:
+            self.remotezCal = np.asarray(userConfig.getValue("remotez_Calibration"))
+            
+        except Exception:
+            pass
+        #setup z stage for later calibration
+        self.calZStage=depot.getDeviceWithName(self.config.get('cal_stage'))
+        
+
     def makeUI(self, parent):
         return MicroscopeAOCompositeDevicePanel(parent, self)
 
@@ -808,6 +817,32 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         userConfig.setValue("dm_sys_flat", np.ndarray.tolist(sys_flat_values))
         return sys_flat_values, best_z_amps_corrected
 
+    #function to calibrate the remote focus 
+    def calibrate_remote_z(self, zStage, limits = (-10,10), step = 2.0,
+                           zmodelist=[3,10]):
+        numsteps = 1+int((limits[1]-limits[0])/step)
+        #modes to utilise, be defualt defocus and 1st order spherical
+        z_modes=np.zeros(self.no_actuators)
+        for i in range(len(zmodelist)):
+            z_modes[zmodelist[i]] = 1
+        startpos=zStage.getPosition()
+        zcal = np.zeros((numsteps,self.no_actuators+1))
+        zStage.moveRelative(limits[0])
+        for i in range (numsteps):
+            (position,zernikes)= self.proxy.flatten_phase(z_modes_ignore =
+                                                          z_modes)
+            zcal[i,0]=(limits[0]+(i*step))
+            zcal[i,1:]= position
+            zStage.moveRelative(step)
+        #returne to starting position
+        zStage.moveAbsolute(startpos)
+        #store calibartion on remote device
+        self.remotezCal = zcal
+        #store cal for retreval on restart
+        userConfig.setValue(
+            "remotez_Calibration", np.ndarray.tolist(zcal))
+
+        
     def reset(self):
         self.proxy.reset()
 
