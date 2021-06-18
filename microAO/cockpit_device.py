@@ -440,6 +440,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                 self.SetSystemFlatCalculationParameters,
             ),
             ("Set Sensorless Parameters", self.SetSensorlessParameters),
+            ("Print System Flat Values", self.PrintSystemFlat)
         ]:
             menu_item = self._context_menu.Append(wx.ID_ANY, label)
             self._menu_item_id_to_callback[menu_item.GetId()] = callback
@@ -556,11 +557,17 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def OnCalcSystemFlat(self, event: wx.CommandEvent) -> None:
         del event
         sys_flat_values, best_z_amps_corrected = self._device.sysFlatCalc()
+        if np.all(np.array(sys_flat_values)==0.5):
+            cockpit.gui.guiUtils.showHelpDialog(None,
+                'System flat proceedure probalbly failed, all values 0.5')
         logger.log.debug(
             "Zernike modes amplitudes corrected:\n %s", best_z_amps_corrected
         )
         logger.log.debug("System flat actuator values:\n%s", sys_flat_values)
 
+    def PrintSystemFlat(self) -> None:
+        print(self._device.proxy.get_system_flat())
+        
     def OnResetDM(self, event: wx.CommandEvent) -> None:
         del event
         self._device.reset()
@@ -823,7 +830,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                            zmodelist=[3,10]):
         #set default zstage to be as defined in config file
         if zStage==None and self.calZStage:
-            zStage=self.calZSatge.getHandlers()[0]
+            zStage=self.calZStage.getHandlers()[0]
         numsteps = 1+int((limits[1]-limits[0])/step)
         #modes to utilise, be defualt defocus and 1st order spherical
         z_modes=np.zeros(self.no_actuators)

@@ -650,7 +650,7 @@ class AdaptiveOpticsDevice(Device):
     @Pyro4.expose
     @_with_wavefront_camera_ttype_software
     def calibrate(self, numPokeSteps=5, noZernikeModes=69, threshold=0.005):
-        self.wavefront_camera.set_exposure_time(0.1)
+#        self.wavefront_camera.set_exposure_time(0.1)
         # Ensure an ROI is defined so a masked image is obtained
         try:
             assert np.any(self.roi) is not None
