@@ -30,6 +30,10 @@ from skimage.restoration import unwrap_phase
 from scipy.integrate import trapz
 import microAO.aoMetrics as metrics
 
+import logging
+
+_logger = logging.getLogger(__name__)
+
 def gaussian_funcion(x, offset, normalising, mean, std_dev):
     return (offset - normalising) + (normalising * np.exp((-(x - mean) ** 2) / (2 * std_dev ** 2)))
 
@@ -350,6 +354,8 @@ class AdaptiveOpticsFunctions():
             [offset, normalising, mean, std_dev], pcov = curve_fit(gaussian_funcion, zernike_amplitudes, metrics_measured,
                                                                    bounds=([np.NINF, 0, z_l_bound, np.NINF],
                                                                            [np.Inf, np.Inf, z_u_bound, np.Inf]))
+            _logger.info("Zernike amplitudes: %s" % zernike_amplitudes)
+            _logger.info("Metrics measured: %s" % metrics_measured)
             print("Calculating amplitude present")
         except RuntimeError:
             max_from_mean_var = (np.max(metrics_measured) - np.mean(metrics_measured))

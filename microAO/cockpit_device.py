@@ -885,6 +885,21 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                     self.zernike_applied.shape[0],
                 )
             )
+            events.publish(
+                events.UPDATE_STATUS_LIGHT,
+                "image count",
+                "Sensorless AO: image %s/%s, mode %s, meas. %s"
+                % (
+                    len(self.correction_stack) + 1,
+                    self.zernike_applied.shape[0],
+                    self.nollZernike[
+                        len(self.correction_stack)
+                        // self.numMes
+                        % len(self.nollZernike)
+                    ],
+                    (len(self.correction_stack) + 1) % self.numMes + 1,
+                ),
+            )
             # Store image for current applied phase
             self.correction_stack.append(np.ndarray.tolist(image))
             wx.CallAfter(self.correctSensorlessProcessing)
@@ -896,6 +911,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 events.NEW_IMAGE % self.camera.name,
                 self.correctSensorlessImage,
             )
+            events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
 
     def findAbberationAndCorrect(self):
         pixelSize = wx.GetApp().Objectives.GetPixelSize() * 10 ** -6
@@ -953,6 +969,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 events.NEW_IMAGE % self.camera.name,
                 self.correctSensorlessImage,
             )
+            events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
 
             self.findAbberationAndCorrect()
 
