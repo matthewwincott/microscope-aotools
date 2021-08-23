@@ -836,7 +836,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.checkIfCalibrated()
 
         # Shared state for the new image callbacks during sensorless
-        self.actuator_offset = None
+        self.actuator_offset = userConfig.getValue("dm_sys_flat")
         self.camera = camera
         self.correction_stack = []  # list of corrected images
         self.sensorless_correct_coef = np.zeros(self.no_actuators)
