@@ -63,7 +63,9 @@ def _np_grey_img_to_wx_image(np_img: np.ndarray) -> wx.Image:
     )
 
     wx_img = wx.Image(
-        scaled_img_rgb.shape[0], scaled_img_rgb.shape[1], scaled_img_rgb,
+        scaled_img_rgb.shape[0],
+        scaled_img_rgb.shape[1],
+        scaled_img_rgb,
     )
     return wx_img
 
@@ -335,22 +337,26 @@ def log_correction_applied(
 ):
     # Save full stack of images used
     _np_save_with_timestamp(
-        np.asarray(correction_stack), "sensorless_AO_correction_stack",
+        np.asarray(correction_stack),
+        "sensorless_AO_correction_stack",
     )
 
     _np_save_with_timestamp(
-        zernike_applied, "sensorless_AO_zernike_applied",
+        zernike_applied,
+        "sensorless_AO_zernike_applied",
     )
 
     _np_save_with_timestamp(nollZernike, "sensorless_AO_nollZernike")
     _np_save_with_timestamp(
-        sensorless_correct_coef, "sensorless_correct_coef",
+        sensorless_correct_coef,
+        "sensorless_correct_coef",
     )
 
     _np_save_with_timestamp(actuator_offset, "ac_pos_sensorless")
 
     ao_log_filepath = os.path.join(
-        wx.GetApp().Config["log"].getpath("dir"), "sensorless_AO_logger.txt",
+        wx.GetApp().Config["log"].getpath("dir"),
+        "sensorless_AO_logger.txt",
     )
     with open(ao_log_filepath, "a+") as fh:
         fh.write(
@@ -494,7 +500,9 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             img = _bin_ndarray(image_raw, new_shape=(resize_dim, resize_dim))
             img = np.require(img, requirements="C")
 
-            last_roi = userConfig.getValue("dm_circleParams",)
+            last_roi = userConfig.getValue(
+                "dm_circleParams",
+            )
             # We need to check if getValue() returns None, instead of
             # passing a default value to getValue().  The reason is
             # that if there is no ROI at the start, by the time we get
@@ -907,6 +915,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         (
             amp_to_correct,
             ac_pos_correcting,
+            _,
         ) = self.proxy.correct_sensorless_single_mode(
             image_stack=current_stack,
             zernike_applied=self.z_steps,

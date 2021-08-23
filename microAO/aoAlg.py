@@ -362,7 +362,7 @@ class AdaptiveOpticsFunctions():
 
         amplitude_present = -1.0 * mean
         print("Amplitude calculated = %f" % amplitude_present)
-        return amplitude_present
+        return amplitude_present, metrics_measured
 
     def get_zernike_modes_sensorless(self, full_image_stack, full_zernike_applied, nollZernike, **kwargs):
         numMes = int(full_zernike_applied.shape[0]/nollZernike.shape[0])
@@ -372,7 +372,7 @@ class AdaptiveOpticsFunctions():
             image_stack = full_image_stack[ii * numMes:(ii + 1) * numMes,:,:]
             zernike_applied = full_zernike_applied[ii * numMes:(ii + 1) * numMes,nollZernike[ii]-1]
             print("Calculating Zernike amplitude %i/%i" %(ii+1, nollZernike.shape[0]))
-            amp = self.find_zernike_amp_sensorless(image_stack, zernike_applied, **kwargs)
+            amp, _ = self.find_zernike_amp_sensorless(image_stack, zernike_applied, **kwargs)
             coef[nollZernike[ii]-1] = amp
 
         return coef

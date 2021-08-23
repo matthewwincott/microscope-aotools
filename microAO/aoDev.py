@@ -37,16 +37,17 @@ from microscope import TriggerMode
 import logging
 
 unwrap_method = {
-    'interferometry': aoAlg.unwrap_interferometry,
+    "interferometry": aoAlg.unwrap_interferometry,
 }
 
 _logger = logging.getLogger(__name__)
 
-wavefront_error_modes = ["RMS","Strehl"]
+wavefront_error_modes = ["RMS", "Strehl"]
 
 
 def _with_wavefront_camera_ttype_software(func):
     """Method decorator to set camera with software trigger type."""
+
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
         ttype = self.wavefront_camera.trigger_type
@@ -61,6 +62,7 @@ def _with_wavefront_camera_ttype_software(func):
             if ttype_needs_change:
                 self.wavefront_camera.set_trigger(ttype, tmode)
         return return_value
+
     return wrapper
 
 
@@ -80,20 +82,36 @@ class AdaptiveOpticsDevice(Device):
         "START": TriggerMode.START,
     }
 
-    def __init__(self, ao_element_uri, wavefront_uri=None, slm_uri=None, **kwargs):
+    def __init__(
+        self, ao_element_uri, wavefront_uri=None, slm_uri=None, **kwargs
+    ):
         # Init will fail if devices it depends on aren't already running, but
         # deviceserver should retry automatically.
         super(AdaptiveOpticsDevice, self).__init__(**kwargs)
         # Adaptive optic element device.
-        self.ao_element = Pyro4.Proxy('PYRO:%s@%s:%d' % (ao_element_uri[0].__name__,
-                                                         ao_element_uri[1], ao_element_uri[2]))
+        self.ao_element = Pyro4.Proxy(
+            "PYRO:%s@%s:%d"
+            % (
+                ao_element_uri[0].__name__,
+                ao_element_uri[1],
+                ao_element_uri[2],
+            )
+        )
         # Wavefront sensor. Must support soft_trigger for now.
         if wavefront_uri is not None:
-            self.wavefront_camera = Pyro4.Proxy('PYRO:%s@%s:%d' % (wavefront_uri[0].__name__,
-                                                                   wavefront_uri[1], wavefront_uri[2]))
+            self.wavefront_camera = Pyro4.Proxy(
+                "PYRO:%s@%s:%d"
+                % (
+                    wavefront_uri[0].__name__,
+                    wavefront_uri[1],
+                    wavefront_uri[2],
+                )
+            )
         # SLM device
         if slm_uri is not None:
-            self.slm = Pyro4.Proxy('PYRO:%s@%s:%d' % (slm_uri[0], slm_uri[1], slm_uri[2]))
+            self.slm = Pyro4.Proxy(
+                "PYRO:%s@%s:%d" % (slm_uri[0], slm_uri[1], slm_uri[2])
+            )
         # self.ao_element.set_trigger(TriggerType.RISING_EDGE) #Set trigger type to rising edge
         self.numActuators = self.ao_element.n_actuators
         # Region of interest (i.e. pupil offset and radius) on camera.
@@ -103,7 +121,7 @@ class AdaptiveOpticsDevice(Device):
         # Mask to select phase information
         self.fft_filter = None
         # Phase acquisition method
-        self.phase_method = 'interferometry'
+        self.phase_method = "interferometry"
         # Control Matrix
         self.controlMatrix = None
         # System correction
@@ -129,10 +147,12 @@ class AdaptiveOpticsDevice(Device):
         try:
             assert np.shape(self.pupil_ac)[0] == self.numActuators
         except Exception:
-            raise Exception("Length mismatch between pupil mask (%i) and "
-                            "number of actuators (%i). Please provide a mask "
-                            "of the correct length" % (np.shape(self.pupil_ac)[0],
-                                                       self.numActuators))
+            raise Exception(
+                "Length mismatch between pupil mask (%i) and "
+                "number of actuators (%i). Please provide a mask "
+                "of the correct length"
+                % (np.shape(self.pupil_ac)[0], self.numActuators)
+            )
 
         self._wavefront_error_mode = self.wavefront_rms_error
 
@@ -150,16 +170,24 @@ class AdaptiveOpticsDevice(Device):
     def disable_camera(self):
         self.wavefront_camera.disable()
 
-    def generate_isosense_pattern_image(self, shape, dist, wavelength, NA, pixel_size):
+    def generate_isosense_pattern_image(
+        self, shape, dist, wavelength, NA, pixel_size
+    ):
         try:
             assert type(shape) is tuple
         except:
-            raise Exception("Expected %s instead recieved %s" % (type((512, 512)), type(shape)))
+            raise Exception(
+                "Expected %s instead recieved %s"
+                % (type((512, 512)), type(shape))
+            )
 
         try:
             assert len(shape) == 2
         except:
-            raise Exception("Expected tuple of length 2, instead recieved length %i" % len(shape))
+            raise Exception(
+                "Expected tuple of length 2, instead recieved length %i"
+                % len(shape)
+            )
 
         ray_crit_dist = (1.22 * wavelength) / (2 * NA)
         ray_crit_freq = 1 / ray_crit_dist
@@ -180,34 +208,45 @@ class AdaptiveOpticsDevice(Device):
         f4y = f1y - int(np.round(OTF_outer_rady * dist))
         f5x = f1x + int(np.round(OTF_outer_radx * dist))
         f5y = f1y + int(np.round(OTF_outer_rady * dist))
-        freq_loc_half = (np.asarray([f2y, f2y, f3y, f3y], dtype="int64"),
-                         np.asarray([f2x, f3x, f2x, f3x], dtype="int64"))
-        freq_loc_quart = (np.asarray([f1y, f1y, f4y, f5y], dtype="int64"),
-                          np.asarray([f4x, f5x, f1x, f1x], dtype="int64"))
+        freq_loc_half = (
+            np.asarray([f2y, f2y, f3y, f3y], dtype="int64"),
+            np.asarray([f2x, f3x, f2x, f3x], dtype="int64"),
+        )
+        freq_loc_quart = (
+            np.asarray([f1y, f1y, f4y, f5y], dtype="int64"),
+            np.asarray([f4x, f5x, f1x, f1x], dtype="int64"),
+        )
         pattern_ft[f1y, f1x] = 1
         pattern_ft[freq_loc_half] = 1 / 2
         pattern_ft[freq_loc_quart] = 1 / 4
 
         pattern_unscaled = abs(np.fft.fft2(np.fft.ifftshift(pattern_ft)))
-        pattern = (pattern_unscaled / np.max(pattern_unscaled)) * ((2 ** 16) - 1)
+        pattern = (pattern_unscaled / np.max(pattern_unscaled)) * (
+            (2 ** 16) - 1
+        )
         pattern = pattern.astype("uint16")
         return pattern
 
     @Pyro4.expose
     def apply_isosense_pattern(self, fill_frac, wavelength, NA, pixel_size):
 
-        if fill_frac < 0 :
+        if fill_frac < 0:
             raise ValueError("Fill fraction must be greater than 0")
         elif fill_frac > 100:
             raise ValueError("Fill fraction must be less than 100")
         else:
             pass
         ## Tell the SLM to prepare the pattern sequence.
-        dist = fill_frac/100
+        dist = fill_frac / 100
         shape = self.slm.get_shape()
-        pattern = self.generate_isosense_pattern_image(shape=shape, wavelength=wavelength,
-                                          dist=dist, NA=NA, pixel_size=pixel_size)
-        self.slm.set_custom_sequence(wavelength,[pattern,pattern])
+        pattern = self.generate_isosense_pattern_image(
+            shape=shape,
+            wavelength=wavelength,
+            dist=dist,
+            NA=NA,
+            pixel_size=pixel_size,
+        )
+        self.slm.set_custom_sequence(wavelength, [pattern, pattern])
 
     @Pyro4.expose
     def set_trigger(self, cp_ttype, cp_tmode):
@@ -235,10 +274,12 @@ class AdaptiveOpticsDevice(Device):
         try:
             assert np.shape(pupil_ac)[0] == self.numActuators
         except Exception:
-            raise Exception("Length mismatch between pupil mask (%i) and "
-                            "number of actuators (%i). Please provide a mask "
-                            "of the correct length" % (np.shape(pupil_ac)[0],
-                                                       self.numActuators))
+            raise Exception(
+                "Length mismatch between pupil mask (%i) and "
+                "number of actuators (%i). Please provide a mask "
+                "of the correct length"
+                % (np.shape(pupil_ac)[0], self.numActuators)
+            )
 
         self.pupil_ac = pupil_ac
 
@@ -257,7 +298,9 @@ class AdaptiveOpticsDevice(Device):
     @Pyro4.expose
     def set_unwrap_method(self, phase_method):
         if not phase_method in unwrap_method:
-            raise Exception("TypeError: Not a phase unwrapping method. Check available unwrap methods.")
+            raise Exception(
+                "TypeError: Not a phase unwrapping method. Check available unwrap methods."
+            )
         else:
             self.phase_method = phase_method
 
@@ -274,7 +317,7 @@ class AdaptiveOpticsDevice(Device):
         return mode
 
     @Pyro4.expose
-    def set_wavefront_error_mode(self,mode):
+    def set_wavefront_error_mode(self, mode):
         if not mode in wavefront_error_modes:
             raise Exception("TypeError: Not a valid wavefront error mode")
         else:
@@ -284,13 +327,13 @@ class AdaptiveOpticsDevice(Device):
                 self._wavefront_error_mode = self.wavefront_strehl_ratio
 
     @Pyro4.expose
-    def set_metric(self,metric):
+    def set_metric(self, metric):
         aoAlg.set_metric(metric)
 
     @Pyro4.expose
     def get_metric(self):
         metric = aoAlg.get_metric()
-        _logger.info("Current image quality metric is: %s" %metric)
+        _logger.info("Current image quality metric is: %s" % metric)
         return metric
 
     @Pyro4.expose
@@ -329,12 +372,19 @@ class AdaptiveOpticsDevice(Device):
     def apply_phase_pattern(self, wavelength, pattern):
         ao_shape = self.ao_element.get_shape()
         try:
-            assert(ao_shape == pattern.shape)
+            assert ao_shape == pattern.shape
         except:
-            raise Exception("AO element shape is (%i,%i), recieved pattern of shape (%i,%i)"
-                            %(ao_shape[0], ao_shape[1], pattern.shape[0], pattern.shape[1]))
+            raise Exception(
+                "AO element shape is (%i,%i), recieved pattern of shape (%i,%i)"
+                % (
+                    ao_shape[0],
+                    ao_shape[1],
+                    pattern.shape[0],
+                    pattern.shape[1],
+                )
+            )
 
-        self.ao_element.set_custom_sequence(wavelength,[pattern,pattern])
+        self.ao_element.set_custom_sequence(wavelength, [pattern, pattern])
         self.last_phase_pattern = pattern
 
     @Pyro4.expose
@@ -372,7 +422,11 @@ class AdaptiveOpticsDevice(Device):
 
     @Pyro4.expose
     def set_roi(self, y0, x0, radius):
-        self.roi = (int(np.round(y0)), int(np.round(x0)), int(np.round(radius)))
+        self.roi = (
+            int(np.round(y0)),
+            int(np.round(x0)),
+            int(np.round(radius)),
+        )
         try:
             assert self.roi is not None
         except:
@@ -393,21 +447,27 @@ class AdaptiveOpticsDevice(Device):
     @Pyro4.expose
     def get_roi(self):
         if np.any(self.roi) is None:
-            raise Exception("No region of interest selected. Please select a region of interest")
+            raise Exception(
+                "No region of interest selected. Please select a region of interest"
+            )
         else:
             return self.roi
 
     @Pyro4.expose
     def get_fourierfilter(self):
         if np.any(self.fft_filter) is None:
-            raise Exception("Fourier filter is None. Please construct Fourier filter")
+            raise Exception(
+                "Fourier filter is None. Please construct Fourier filter"
+            )
         else:
             return self.fft_filter
 
     @Pyro4.expose
     def get_controlMatrix(self):
         if np.any(self.controlMatrix) is None:
-            raise Exception("No control matrix calculated. Please calibrate the AO element")
+            raise Exception(
+                "No control matrix calculated. Please calibrate the AO element"
+            )
         else:
             return self.controlMatrix
 
@@ -449,7 +509,9 @@ class AdaptiveOpticsDevice(Device):
                 # cameras (I'm not sure it still does).  We should not
                 # be trying to handle hardware specific exceptions.
                 if str(e) == "ERROR 10: Timeout":
-                    _logger.info("Received Timeout error from camera. Waiting to try again...")
+                    _logger.info(
+                        "Received Timeout error from camera. Waiting to try again..."
+                    )
                     time.sleep(1)
                 else:
                     _logger.info(type(e))
@@ -463,9 +525,13 @@ class AdaptiveOpticsDevice(Device):
         if np.any(self.roi) is None:
             data = data_raw
         else:
-            data_cropped = np.zeros((self.roi[2] * 2, self.roi[2] * 2), dtype=float)
-            data_cropped[:, :] = data_raw[self.roi[0] - self.roi[2]:self.roi[0] + self.roi[2],
-                                 self.roi[1] - self.roi[2]:self.roi[1] + self.roi[2]]
+            data_cropped = np.zeros(
+                (self.roi[2] * 2, self.roi[2] * 2), dtype=float
+            )
+            data_cropped[:, :] = data_raw[
+                self.roi[0] - self.roi[2] : self.roi[0] + self.roi[2],
+                self.roi[1] - self.roi[2] : self.roi[1] + self.roi[2],
+            ]
             if np.any(self.mask) is None:
                 self.mask = self.make_mask(self.roi[2])
                 data = data_cropped
@@ -474,22 +540,31 @@ class AdaptiveOpticsDevice(Device):
         return data
 
     @Pyro4.expose
-    def set_fourierfilter(self, test_image, region=None, window_dim=None, mask_di=None):
+    def set_fourierfilter(
+        self, test_image, region=None, window_dim=None, mask_di=None
+    ):
         # Ensure an ROI is defined so a masked image is obtained
         try:
             assert np.any(self.roi) is not None
         except:
-            raise Exception("No region of interest selected. Please select a region of interest")
+            raise Exception(
+                "No region of interest selected. Please select a region of interest"
+            )
 
         try:
-            self.fft_filter = aoAlg.make_fft_filter(test_image, region=region, window_dim=window_dim, mask_di=mask_di)
+            self.fft_filter = aoAlg.make_fft_filter(
+                test_image,
+                region=region,
+                window_dim=window_dim,
+                mask_di=mask_di,
+            )
         except Exception as e:
             _logger.info(e)
         return self.fft_filter
 
     @Pyro4.expose
     def check_unwrap_conditions(self, image=None):
-        if self.phase_method == 'interferometry':
+        if self.phase_method == "interferometry":
             if np.any(self.mask) is None:
                 raise Exception("Mask is None. Please construct mask.")
             else:
@@ -498,7 +573,9 @@ class AdaptiveOpticsDevice(Device):
                 if image is not None:
                     self.set_fourierfilter(image)
                 else:
-                    raise Exception("Fourier filter is None. Please construct Fourier filter")
+                    raise Exception(
+                        "Fourier filter is None. Please construct Fourier filter"
+                    )
             else:
                 pass
 
@@ -508,7 +585,9 @@ class AdaptiveOpticsDevice(Device):
         try:
             assert np.any(self.roi) is not None
         except:
-            raise Exception("No region of interest selected. Please select a region of interest")
+            raise Exception(
+                "No region of interest selected. Please select a region of interest"
+            )
 
         if np.any(image) is None:
             image = self.acquire()
@@ -521,19 +600,30 @@ class AdaptiveOpticsDevice(Device):
 
     @Pyro4.expose
     def getzernikemodes(self, image_unwrap, noZernikeModes, resize_dim=128):
-        coef = aoAlg.get_zernike_modes(image_unwrap, noZernikeModes, resize_dim=resize_dim)
+        coef = aoAlg.get_zernike_modes(
+            image_unwrap, noZernikeModes, resize_dim=resize_dim
+        )
         return coef
 
     @Pyro4.expose
-    def createcontrolmatrix(self, imageStack, noZernikeModes, pokeSteps, pupil_ac=None, threshold=0.005):
+    def createcontrolmatrix(
+        self,
+        imageStack,
+        noZernikeModes,
+        pokeSteps,
+        pupil_ac=None,
+        threshold=0.005,
+    ):
         # Ensure an ROI is defined so a masked image is obtained
         try:
             assert np.any(self.roi) is not None
         except:
-            raise Exception("No region of interest selected. Please select a region of interest")
+            raise Exception(
+                "No region of interest selected. Please select a region of interest"
+            )
 
         # Ensure the conditions for phase unwrapping are in satisfied
-        self.check_unwrap_conditions(imageStack[0,:,:])
+        self.check_unwrap_conditions(imageStack[0, :, :])
 
         if np.any(pupil_ac == None):
             pupil_ac = self.pupil_ac
@@ -545,7 +635,9 @@ class AdaptiveOpticsDevice(Device):
 
         assert x == y
         edge_mask = np.sqrt(
-            (np.arange(-x / 2.0, x / 2.0) ** 2).reshape((x, 1)) + (np.arange(-x / 2.0, x / 2.0) ** 2)) < ((x / 2.0) - 3)
+            (np.arange(-x / 2.0, x / 2.0) ** 2).reshape((x, 1))
+            + (np.arange(-x / 2.0, x / 2.0) ** 2)
+        ) < ((x / 2.0) - 3)
         all_zernikeModeAmp = []
         all_pokeAmps = []
 
@@ -570,17 +662,33 @@ class AdaptiveOpticsDevice(Device):
                     unwrapped_stack_cropped[im, :, :] = image_unwrap
 
                     # Check the current phase map for discontinuities which can interfere with the Zernike mode measurements
-                    diff_image = abs(np.diff(np.diff(image_unwrap, axis=1), axis=0)) * edge_mask[:-1, :-1]
-                    no_discontinuities = np.shape(np.where(diff_image > 2 * np.pi))[1]
+                    diff_image = (
+                        abs(np.diff(np.diff(image_unwrap, axis=1), axis=0))
+                        * edge_mask[:-1, :-1]
+                    )
+                    no_discontinuities = np.shape(
+                        np.where(diff_image > 2 * np.pi)
+                    )[1]
                     if no_discontinuities > (x * y) / 1000.0:
-                        _logger.info("Unwrap image %d/%d contained discontinuites" % (curr_calc, noImages))
-                        _logger.info("Zernike modes %d/%d not calculated" % (curr_calc, noImages))
+                        _logger.info(
+                            "Unwrap image %d/%d contained discontinuites"
+                            % (curr_calc, noImages)
+                        )
+                        _logger.info(
+                            "Zernike modes %d/%d not calculated"
+                            % (curr_calc, noImages)
+                        )
                     else:
                         pokeAc[ac] = pokeSteps[im]
                         all_pokeAmps.append(pokeAc.tolist())
-                        _logger.info("Calculating Zernike modes %d/%d..." % (curr_calc, noImages))
+                        _logger.info(
+                            "Calculating Zernike modes %d/%d..."
+                            % (curr_calc, noImages)
+                        )
 
-                    curr_amps = aoAlg.get_zernike_modes(image_unwrap, noZernikeModes)
+                    curr_amps = aoAlg.get_zernike_modes(
+                        image_unwrap, noZernikeModes
+                    )
                     zernikeModeAmp_list.append(curr_amps)
                     all_zernikeModeAmp.append(curr_amps)
             np.save("image_stack_cropped_ac_%i" % ac, image_stack_cropped)
@@ -590,11 +698,13 @@ class AdaptiveOpticsDevice(Device):
         all_pokeAmps = np.asarray(all_pokeAmps)
 
         _logger.info("Computing Control Matrix")
-        self.controlMatrix = aoAlg.create_control_matrix(zernikeAmps=all_zernikeModeAmp,
-                                                         pokeSteps=all_pokeAmps,
-                                                         numActuators=self.numActuators,
-                                                         pupil_ac=self.pupil_ac,
-                                                         threshold=threshold)
+        self.controlMatrix = aoAlg.create_control_matrix(
+            zernikeAmps=all_zernikeModeAmp,
+            pokeSteps=all_pokeAmps,
+            numActuators=self.numActuators,
+            pupil_ac=self.pupil_ac,
+            threshold=threshold,
+        )
         _logger.info("Control Matrix computed")
         return self.controlMatrix
 
@@ -604,7 +714,9 @@ class AdaptiveOpticsDevice(Device):
         try:
             assert np.any(self.roi) is not None
         except:
-            raise Exception("No region of interest selected. Please select a region of interest")
+            raise Exception(
+                "No region of interest selected. Please select a region of interest"
+            )
 
         # Ensure the conditions for phase unwrapping are in satisfied
         self.check_unwrap_conditions()
@@ -626,10 +738,12 @@ class AdaptiveOpticsDevice(Device):
             phase_map = self.acquire_unwrapped_phase()
 
         if self.mask is None:
-            self.make_mask(phase_map.shape//2)
+            self.make_mask(phase_map.shape // 2)
 
         true_flat = np.zeros(np.shape(phase_map))
-        rms_error = np.sqrt(np.mean((true_flat[self.mask] - phase_map[self.mask]) ** 2))
+        rms_error = np.sqrt(
+            np.mean((true_flat[self.mask] - phase_map[self.mask]) ** 2)
+        )
         return rms_error
 
     @Pyro4.expose
@@ -638,9 +752,13 @@ class AdaptiveOpticsDevice(Device):
             phase_map = self.acquire_unwrapped_phase()
 
         if self.mask is None:
-            self.make_mask(phase_map.shape//2)
+            self.make_mask(phase_map.shape // 2)
 
-        strehl_ratio = np.exp(-np.mean((phase_map[self.mask] - np.mean(phase_map[self.mask])) ** 2))
+        strehl_ratio = np.exp(
+            -np.mean(
+                (phase_map[self.mask] - np.mean(phase_map[self.mask])) ** 2
+            )
+        )
         return strehl_ratio
 
     @Pyro4.expose
@@ -651,7 +769,9 @@ class AdaptiveOpticsDevice(Device):
         try:
             assert np.any(self.roi) is not None
         except:
-            raise Exception("No region of interest selected. Please select a region of interest")
+            raise Exception(
+                "No region of interest selected. Please select a region of interest"
+            )
 
         test_image = np.asarray(self.acquire())
         (y, x) = np.shape(test_image)
@@ -668,7 +788,9 @@ class AdaptiveOpticsDevice(Device):
 
         assert x == y
         edge_mask = np.sqrt(
-            (np.arange(-x / 2.0, x / 2.0) ** 2).reshape((x, 1)) + (np.arange(-x / 2.0, x / 2.0) ** 2)) < ((x / 2.0) - 3)
+            (np.arange(-x / 2.0, x / 2.0) ** 2).reshape((x, 1))
+            + (np.arange(-x / 2.0, x / 2.0) ** 2)
+        ) < ((x / 2.0) - 3)
         all_zernikeModeAmp = []
         all_pokeAmps = []
 
@@ -695,8 +817,12 @@ class AdaptiveOpticsDevice(Device):
                         _logger.info("Actuator values being sent:")
                         _logger.info(actuator_values[(curr_calc - 1), :])
                         _logger.info("Shape of actuator vector:")
-                        _logger.info(np.shape(actuator_values[(curr_calc - 1), :]))
-                    _logger.info("Frame %i/%i captured" % (curr_calc, noImages))
+                        _logger.info(
+                            np.shape(actuator_values[(curr_calc - 1), :])
+                        )
+                    _logger.info(
+                        "Frame %i/%i captured" % (curr_calc, noImages)
+                    )
 
                     # Acquire the current poke image
                     poke_image = self.acquire()
@@ -707,17 +833,33 @@ class AdaptiveOpticsDevice(Device):
                     unwrapped_stack_cropped[im, :, :] = image_unwrap
 
                     # Check the current phase map for discontinuities which can interfere with the Zernike mode measurements
-                    diff_image = abs(np.diff(np.diff(image_unwrap, axis=1), axis=0)) * edge_mask[:-1, :-1]
-                    no_discontinuities = np.shape(np.where(diff_image > 2 * np.pi))[1]
+                    diff_image = (
+                        abs(np.diff(np.diff(image_unwrap, axis=1), axis=0))
+                        * edge_mask[:-1, :-1]
+                    )
+                    no_discontinuities = np.shape(
+                        np.where(diff_image > 2 * np.pi)
+                    )[1]
                     if no_discontinuities > (x * y) / 1000.0:
-                        _logger.info("Unwrap image %d/%d contained discontinuites" % (curr_calc, noImages))
-                        _logger.info("Zernike modes %d/%d not calculated" % (curr_calc, noImages))
+                        _logger.info(
+                            "Unwrap image %d/%d contained discontinuites"
+                            % (curr_calc, noImages)
+                        )
+                        _logger.info(
+                            "Zernike modes %d/%d not calculated"
+                            % (curr_calc, noImages)
+                        )
                     else:
                         pokeAc[ac] = pokeSteps[im]
                         all_pokeAmps.append(pokeAc.tolist())
-                        _logger.info("Calculating Zernike modes %d/%d..." % (curr_calc, noImages))
+                        _logger.info(
+                            "Calculating Zernike modes %d/%d..."
+                            % (curr_calc, noImages)
+                        )
 
-                    curr_amps = aoAlg.get_zernike_modes(image_unwrap, noZernikeModes)
+                    curr_amps = aoAlg.get_zernike_modes(
+                        image_unwrap, noZernikeModes
+                    )
                     zernikeModeAmp_list.append(curr_amps)
                     all_zernikeModeAmp.append(curr_amps)
             zernikeModeAmp = np.asarray(zernikeModeAmp_list)
@@ -732,11 +874,13 @@ class AdaptiveOpticsDevice(Device):
         self.reset()
 
         _logger.info("Computing Control Matrix")
-        self.controlMatrix = aoAlg.create_control_matrix(zernikeAmps=all_zernikeModeAmp,
-                                                         pokeSteps=all_pokeAmps,
-                                                         numActuators=self.numActuators,
-                                                         pupil_ac=self.pupil_ac,
-                                                         threshold=threshold)
+        self.controlMatrix = aoAlg.create_control_matrix(
+            zernikeAmps=all_zernikeModeAmp,
+            pokeSteps=all_pokeAmps,
+            numActuators=self.numActuators,
+            pupil_ac=self.pupil_ac,
+            threshold=threshold,
+        )
         _logger.info("Control Matrix computed")
         np.save("control_matrix", self.controlMatrix)
         return self.controlMatrix
@@ -745,12 +889,16 @@ class AdaptiveOpticsDevice(Device):
     # directly measure the phase wavefront.
     @Pyro4.expose
     @_with_wavefront_camera_ttype_software
-    def flatten_phase(self, iterations=1, error_thresh=np.inf, z_modes_ignore=None):
+    def flatten_phase(
+        self, iterations=1, error_thresh=np.inf, z_modes_ignore=None
+    ):
         # Ensure an ROI is defined so a masked image is obtained
         try:
             assert np.any(self.roi) is not None
         except:
-            raise Exception("No region of interest selected. Please select a region of interest")
+            raise Exception(
+                "No region of interest selected. Please select a region of interest"
+            )
 
         # Ensure the conditions for phase unwrapping are in satisfied
         self.check_unwrap_conditions()
@@ -760,8 +908,10 @@ class AdaptiveOpticsDevice(Device):
         try:
             assert numActuators == self.numActuators
         except:
-            raise Exception("Control Matrix dimension 0 axis and number of "
-                            "actuators do not match.")
+            raise Exception(
+                "Control Matrix dimension 0 axis and number of "
+                "actuators do not match."
+            )
         # Set which modes to ignore while flattening
         if np.any(z_modes_ignore) is None:
             # By default, ignore piston, tip and tilt
@@ -773,8 +923,12 @@ class AdaptiveOpticsDevice(Device):
             # If we have fewer Zernike modes to ignore than in the control matrix, pad with zeros (i.e. ignore all the
             # Zernike modes the user didn't specify)
             elif len(z_modes_ignore) < nzernike:
-                z_modes_ignore = np.pad(z_modes_ignore, (0,len(z_modes_ignore)-nzernike),
-                                        mode="constant", constant_values=0)
+                z_modes_ignore = np.pad(
+                    z_modes_ignore,
+                    (0, len(z_modes_ignore) - nzernike),
+                    mode="constant",
+                    constant_values=0,
+                )
             else:
                 pass
 
@@ -794,35 +948,66 @@ class AdaptiveOpticsDevice(Device):
             image = self.acquire()
             correction_wavefront = unwrap_method[self.phase_method](image)
             edge_mask = np.sqrt(
-                (np.arange(-x / 2.0, x / 2.0) ** 2).reshape((x, 1)) + (np.arange(-x / 2.0, x / 2.0) ** 2)) < (
-                                (x / 2.0) - 3)
-            diff_correction_wavefront = abs(np.diff(np.diff(correction_wavefront, axis=1), axis=0)) * edge_mask[:-1, :-1]
-            no_discontinuities_correction = np.shape(np.where(diff_correction_wavefront > 2 * np.pi))[1]
+                (np.arange(-x / 2.0, x / 2.0) ** 2).reshape((x, 1))
+                + (np.arange(-x / 2.0, x / 2.0) ** 2)
+            ) < ((x / 2.0) - 3)
+            diff_correction_wavefront = (
+                abs(np.diff(np.diff(correction_wavefront, axis=1), axis=0))
+                * edge_mask[:-1, :-1]
+            )
+            no_discontinuities_correction = np.shape(
+                np.where(diff_correction_wavefront > 2 * np.pi)
+            )[1]
             z_amps = self.getzernikemodes(correction_wavefront, nzernike)
 
             ## Here we ignore piston, tip and tilt since they are not true optical aberrations
-            correction_wavefront_mptt = correction_wavefront - aotools.phaseFromZernikes(z_amps[0:3], x)
-            current_error = self._wavefront_error_mode(correction_wavefront_mptt)
+            correction_wavefront_mptt = (
+                correction_wavefront
+                - aotools.phaseFromZernikes(z_amps[0:3], x)
+            )
+            current_error = self._wavefront_error_mode(
+                correction_wavefront_mptt
+            )
             z_amps = z_amps * z_modes_ignore
-            flat_actuators = self.set_phase((-1.0 * z_amps), offset=best_flat_actuators)
+            flat_actuators = self.set_phase(
+                (-1.0 * z_amps), offset=best_flat_actuators
+            )
             time.sleep(1)
 
             # Now that the wavefront is corrected, measure it again and calculate RMS deformation
             image = self.acquire()
             corrected_wavefront = unwrap_method[self.phase_method](image)
-            diff_corrected_wavefront = abs(np.diff(np.diff(corrected_wavefront, axis=1), axis=0)) * edge_mask[:-1,
-                                                                                                      :-1]
-            no_discontinuities_corrected = np.shape(np.where(diff_corrected_wavefront > 2 * np.pi))[1]
-            z_amps_corrected = self.getzernikemodes(corrected_wavefront, nzernike)
+            diff_corrected_wavefront = (
+                abs(np.diff(np.diff(corrected_wavefront, axis=1), axis=0))
+                * edge_mask[:-1, :-1]
+            )
+            no_discontinuities_corrected = np.shape(
+                np.where(diff_corrected_wavefront > 2 * np.pi)
+            )[1]
+            z_amps_corrected = self.getzernikemodes(
+                corrected_wavefront, nzernike
+            )
 
             ## Here we ignore piston, tip and tilt since they are not true optical aberrations
-            corrected_wavefront_mptt = corrected_wavefront - aotools.phaseFromZernikes(z_amps_corrected[0:3], x)
-            corrected_error = self._wavefront_error_mode(corrected_wavefront_mptt)
-            _logger.info("Current wavefront error is %.5f. Wavefront error before correction %.5f."
-                         "Best is %.5f" % (corrected_error, current_error, best_error))
-            if corrected_error < best_error and corrected_error < current_error:
+            corrected_wavefront_mptt = (
+                corrected_wavefront
+                - aotools.phaseFromZernikes(z_amps_corrected[0:3], x)
+            )
+            corrected_error = self._wavefront_error_mode(
+                corrected_wavefront_mptt
+            )
+            _logger.info(
+                "Current wavefront error is %.5f. Wavefront error before correction %.5f."
+                "Best is %.5f" % (corrected_error, current_error, best_error)
+            )
+            if (
+                corrected_error < best_error
+                and corrected_error < current_error
+            ):
                 if no_discontinuities_corrected > ((x * y) / 1000.0):
-                    _logger.info("Too many discontinuities in wavefront unwrap")
+                    _logger.info(
+                        "Too many discontinuities in wavefront unwrap"
+                    )
                 else:
                     best_flat_actuators = np.copy(flat_actuators)
                     best_z_amps_corrected = np.copy(z_amps)
@@ -839,7 +1024,9 @@ class AdaptiveOpticsDevice(Device):
     @Pyro4.expose
     def set_phase(self, applied_z_modes, offset=None):
         try:
-            actuator_pos = aoAlg.ac_pos_from_zernike(applied_z_modes, self.numActuators)
+            actuator_pos = aoAlg.ac_pos_from_zernike(
+                applied_z_modes, self.numActuators
+            )
         except Exception as err:
             _logger.info(err)
             raise err
@@ -865,7 +1052,7 @@ class AdaptiveOpticsDevice(Device):
             z_modes_ac0 = self.measure_zernike(modes_tba)
             applied_z_modes[ii] = 1
             self.set_phase(applied_z_modes)
-            _logger.info("Appling Zernike mode %i/%i" % (ii+1, modes_tba))
+            _logger.info("Appling Zernike mode %i/%i" % (ii + 1, modes_tba))
             acquired_z_modes = self.measure_zernike(modes_tba)
             _logger.info("Measured phase")
             assay[:, ii] = acquired_z_modes - z_modes_ac0
@@ -879,7 +1066,9 @@ class AdaptiveOpticsDevice(Device):
         try:
             assert np.any(self.roi) is not None
         except:
-            raise Exception("No region of interest selected. Please select a region of interest")
+            raise Exception(
+                "No region of interest selected. Please select a region of interest"
+            )
 
         # Ensure the conditions for phase unwrapping are in satisfied
         self.check_unwrap_conditions()
@@ -889,8 +1078,10 @@ class AdaptiveOpticsDevice(Device):
         try:
             assert numActuators == self.numActuators
         except:
-            raise Exception("Control Matrix dimension 0 axis and number of "
-                            "actuators do not match.")
+            raise Exception(
+                "Control Matrix dimension 0 axis and number of "
+                "actuators do not match."
+            )
         # Set which modes to ignore while flattening
         if np.any(z_modes_ignore) is None:
             # By default, ignore piston, tip and tilt
@@ -902,8 +1093,12 @@ class AdaptiveOpticsDevice(Device):
             # If we have fewer Zernike modes to ignore than in the control matrix, pad with zeros (i.e. ignore all the
             # Zernike modes the user didn't specify)
             elif len(z_modes_ignore) < nzernike:
-                z_modes_ignore = np.pad(z_modes_ignore, (0, len(z_modes_ignore) - nzernike),
-                                        mode="constant", constant_values=0)
+                z_modes_ignore = np.pad(
+                    z_modes_ignore,
+                    (0, len(z_modes_ignore) - nzernike),
+                    mode="constant",
+                    constant_values=0,
+                )
             else:
                 pass
 
@@ -912,17 +1107,25 @@ class AdaptiveOpticsDevice(Device):
 
         correction_wavefront = unwrap_method[self.phase_method](image)
         edge_mask = np.sqrt(
-            (np.arange(-x / 2.0, x / 2.0) ** 2).reshape((x, 1)) + (np.arange(-x / 2.0, x / 2.0) ** 2)) < (
-                            (x / 2.0) - 3)
-        diff_correction_wavefront = abs(np.diff(np.diff(correction_wavefront, axis=1), axis=0)) * edge_mask[:-1, :-1]
-        no_discontinuities_correction = np.shape(np.where(diff_correction_wavefront > 2 * np.pi))[1]
+            (np.arange(-x / 2.0, x / 2.0) ** 2).reshape((x, 1))
+            + (np.arange(-x / 2.0, x / 2.0) ** 2)
+        ) < ((x / 2.0) - 3)
+        diff_correction_wavefront = (
+            abs(np.diff(np.diff(correction_wavefront, axis=1), axis=0))
+            * edge_mask[:-1, :-1]
+        )
+        no_discontinuities_correction = np.shape(
+            np.where(diff_correction_wavefront > 2 * np.pi)
+        )[1]
         if no_discontinuities_correction > ((x * y) / 1000.0):
             _logger.info("Too many discontinuities in wavefront unwrap")
             return
         else:
             z_amps = self.getzernikemodes(correction_wavefront, nzernike)
             z_amps = z_amps * z_modes_ignore
-            flat_actuators = self.set_phase((-1.0 * z_amps), offset=self.last_actuator_patterns)
+            flat_actuators = self.set_phase(
+                (-1.0 * z_amps), offset=self.last_actuator_patterns
+            )
             return z_amps, flat_actuators
 
     @Pyro4.expose
@@ -931,12 +1134,27 @@ class AdaptiveOpticsDevice(Device):
         return metric
 
     @Pyro4.expose
-    def correct_sensorless_single_mode(self, image_stack, zernike_applied, nollIndex,
-                                       wavelength, NA, pixel_size, offset=None):
+    def correct_sensorless_single_mode(
+        self,
+        image_stack,
+        zernike_applied,
+        nollIndex,
+        wavelength,
+        NA,
+        pixel_size,
+        offset=None,
+    ):
         z_amps = np.zeros(self.numActuators)
-        amp_to_correct = aoAlg.find_zernike_amp_sensorless(image_stack, zernike_applied, wavelength=wavelength, NA=NA,
-                                                           pixel_size=pixel_size)
-        if abs(amp_to_correct) <= 1.5 * (np.max(zernike_applied)-np.min(zernike_applied)):
+        amp_to_correct, metrics = aoAlg.find_zernike_amp_sensorless(
+            image_stack,
+            zernike_applied,
+            wavelength=wavelength,
+            NA=NA,
+            pixel_size=pixel_size,
+        )
+        if abs(amp_to_correct) <= 1.5 * (
+            np.max(zernike_applied) - np.min(zernike_applied)
+        ):
             _logger.info("Amplitude calculated = %f" % amp_to_correct)
         else:
             _logger.info("Amplitude calculated = %f" % amp_to_correct)
@@ -947,14 +1165,28 @@ class AdaptiveOpticsDevice(Device):
             ac_pos_correcting = self.set_phase(z_amps)
         else:
             ac_pos_correcting = self.set_phase(z_amps, offset=offset)
-        return amp_to_correct, ac_pos_correcting
+        return amp_to_correct, ac_pos_correcting, metrics
 
     @Pyro4.expose
-    def correct_sensorless_all_modes(self, full_image_stack, full_zernike_applied, nollZernike, wavelength, NA,
-                                     pixel_size, offset=None):
+    def correct_sensorless_all_modes(
+        self,
+        full_image_stack,
+        full_zernike_applied,
+        nollZernike,
+        wavelength,
+        NA,
+        pixel_size,
+        offset=None,
+    ):
         # May change this function later if we hand control of other cameras to the composite device
-        coef = aoAlg.get_zernike_modes_sensorless(full_image_stack, full_zernike_applied, nollZernike=nollZernike,
-                                                  wavelength=wavelength, NA=NA, pixel_size=pixel_size)
+        coef = aoAlg.get_zernike_modes_sensorless(
+            full_image_stack,
+            full_zernike_applied,
+            nollZernike=nollZernike,
+            wavelength=wavelength,
+            NA=NA,
+            pixel_size=pixel_size,
+        )
         if np.any(offset) is None:
             ac_pos_correcting = self.set_phase(coef)
         else:
