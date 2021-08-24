@@ -564,6 +564,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             "Zernike modes amplitudes corrected:\n %s", best_z_amps_corrected
         )
         logger.log.debug("System flat actuator values:\n%s", sys_flat_values)
+        self._device.proxy.set_system_flat(best_z_amps_corrected)
 
     def PrintSystemFlat(self) -> None:
         print(self._device.proxy.get_system_flat())
@@ -676,7 +677,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         # Need initial values for system flat calculations
         self.sys_flat_num_it = 10
-        self.sys_error_thresh = np.inf
+        self.sys_error_thresh = 0
         self.sysFlatNollZernike = np.linspace(
             start=4, stop=68, num=65, dtype=int
         )

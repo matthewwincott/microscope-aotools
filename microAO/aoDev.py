@@ -749,7 +749,7 @@ class AdaptiveOpticsDevice(Device):
     # directly measure the phase wavefront.
     @Pyro4.expose
     @_with_wavefront_camera_ttype_software
-    def flatten_phase(self, iterations=1, error_thresh=np.inf, z_modes_ignore=None):
+    def flatten_phase(self, iterations=1, error_thresh=0, z_modes_ignore=None):
         # Ensure an ROI is defined so a masked image is obtained
         try:
             assert np.any(self.roi) is not None
@@ -792,7 +792,7 @@ class AdaptiveOpticsDevice(Device):
         assert x == y
         best_error = np.inf
         ii = 0
-        while (iterations > ii) or (best_error > error_thresh):
+        while (iterations > ii) and (best_error > error_thresh):
             _logger.info("Correction iteration %i/%i" % (ii + 1, iterations))
             # Measure the current wavefront and calculate the Zernike modes to apply to correct
             image = self.acquire()
