@@ -380,6 +380,38 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         panel_control = wx.Panel(tabs)
         panel_setup = wx.Panel(tabs)
 
+        # Button to load control matrix
+        loadControlMatrixButton = wx.Button(panel_setup, label="Load control matrix")
+        loadControlMatrixButton.Bind(wx.EVT_BUTTON, self.OnLoadControlMatrix)
+        
+        # Button to save control matrix
+        saveControlMatrixButton = wx.Button(panel_setup, label="Save control matrix")
+        saveControlMatrixButton.Bind(wx.EVT_BUTTON, self.OnSaveControlMatrix)
+
+        # Button to load flat
+        loadFlatButton = wx.Button(panel_setup, label="Load flat")
+        loadFlatButton.Bind(wx.EVT_BUTTON, self.OnLoadFlat)
+        
+        # Button to save flat
+        saveFlatButton = wx.Button(panel_setup, label="Save flat")
+        saveFlatButton.Bind(wx.EVT_BUTTON, self.OnSaveFlat)
+
+        # Button to load applied aberration
+        loadModesButton = wx.Button(panel_control, label="Load modes")
+        loadModesButton.Bind(wx.EVT_BUTTON, self.OnLoadModes)
+        
+        # Button to save applied aberration
+        saveModesButton = wx.Button(panel_control, label="Save modes")
+        saveModesButton.Bind(wx.EVT_BUTTON, self.OnSaveModes)
+
+        # Button to load actuator values
+        loadActuatorsButton = wx.Button(panel_control, label="Load actuators")
+        loadActuatorsButton.Bind(wx.EVT_BUTTON, self.OnLoadActuatorValues)
+        
+        # Button to save actuator values
+        saveActuatorsButton = wx.Button(panel_control, label="Save actuators")
+        saveActuatorsButton.Bind(wx.EVT_BUTTON, self.OnSaveActuatorValues)
+
         # Button to select the interferometer ROI
         selectCircleButton = wx.Button(panel_calibration, label="Select ROI")
         selectCircleButton.Bind(wx.EVT_BUTTON, self.OnSelectROI)
@@ -431,6 +463,12 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         panel_flags = wx.SizerFlags(0).Expand().Border(wx.LEFT|wx.RIGHT, 50)
 
+        sizer_panel_setup = wx.BoxSizer(wx.VERTICAL)
+        for btn in [
+            loadControlMatrixButton,
+            saveControlMatrixButton,
+            loadFlatButton,
+            saveFlatButton
         ]:
             sizer_panel_setup.Add(btn, panel_flags)
 
@@ -611,8 +649,187 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             cockpit.gui.guiUtils.placeMenuAtMouse(self, menu)
 
 
+    def OnLoadControlMatrix(self, event: wx.CommandEvent) -> None:
+        del event
+
+        # Prompt for file to load
+        with wx.FileDialog(self, "Load calibration", wildcard="Data (*.txt)|*.txt", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
+            if fileDialog.ShowModal() != wx.ID_OK:
+                return
+            fpath = fileDialog.GetPath()
+
+        # Load calibration matrix from file, check format, and set on device
+        try:
+            control_matrix = np.loadtxt(fpath)
+            assert (control_matrix.ndim == 2 and control_matrix.shape[1] == self._device.no_actuators)
+            self._device.proxy.set_controlMatrix(control_matrix)
+
+            # Set control matrix in cockpit config
+            userConfig.setValue(
+                "dm_controlMatrix", np.ndarray.tolist(control_matrix)
+            )
+
+            # Log
+            logger.log.info("Control matrix loaded from file")
+
+        except Exception as e:
+            message = ('Error loading calibration file.')
+            logger.log.error(message)
+            wx.MessageBox(message, caption='Error')
+        
+
+    def OnSaveControlMatrix(self, event: wx.CommandEvent) -> None:
+        del event
+
+        # Prompt for file to load
+        with wx.FileDialog(self, "Save calibration", wildcard="Data (*.txt)|*.txt",
+                           style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
+            if fileDialog.ShowModal() != wx.ID_OK:
+                return
+            
+            fpath = fileDialog.GetPath()
+
+        # Get calibration matrix and save to file
+        try:
+            cmatrix = self._device.proxy.get_controlMatrix()
+            np.savetxt(fpath, cmatrix)
+        except:
+            logger.log.error("Failed to save calibration data")
+
+        logger.log.info("Saved DM calibration data to file {}".format(fpath))
+
+    def OnLoadFlat(self, event: wx.CommandEvent) -> None:
+        del event
+
+        # Prompt for file to load
+        with wx.FileDialog(self, "Load DM flat values", wildcard="Flat data (*.txt)|*.txt", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
+            if fileDialog.ShowModal() != wx.ID_OK:
+                return
+            fpath = fileDialog.GetPath()
+
+        try:
+            # Load flat values from file and check format
+            new_flat = np.loadtxt(fpath)
+            assert (new_flat.ndim == 1 and new_flat.size <= self._device.no_actuators)
+
+            # Calculate updated actuator values using new flat
+            curr_flat = self._device.proxy.get_system_flat()
+            curr_actuator_values = self._device.proxy.get_last_actuator_values()
+            new_actuator_values = curr_actuator_values - curr_flat + new_flat
+
+            # Set new flat and update actuator values
+            self._device.proxy.set_system_flat(new_flat)
+            self._device.proxy.send(new_actuator_values)
+
+            # Set flat in cockpit config
+            userConfig.setValue(
+                "dm_controlMatrix", np.ndarray.tolist(new_flat)
+            )
+
+            # Log
+            logger.log.info("System flat loaded from file")
+
+        except Exception as e:
+            message = ('Error loading flat file.')
+            logger.log.error(message)
+            wx.MessageBox(message, caption='Error')
+
+    def OnSaveFlat(self, event: wx.CommandEvent) -> None:
+        # Prompt for file to load
+        with wx.FileDialog(self, "Save DM flat values", wildcard="Flat data (*.txt)|*.txt",
+                           style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
+            if fileDialog.ShowModal() != wx.ID_OK:
+                return
+            
+            fpath = fileDialog.GetPath()
+
+        # Get flat values from device and save to file
+        try:
+            values = self._device.proxy.get_system_flat()
+            np.savetxt(fpath, values)
+        except:
+            logger.log.error("Failed to save DM flat value data")
+
+        logger.log.info("Saved DM flat data to file {}".format(fpath))
+
+    def OnLoadActuatorValues(self, event: wx.CommandEvent) -> None:
+        del event
+        # Prompt for file to load
+        with wx.FileDialog(self, "Load flat", wildcard="Flat data (*.txt)|*.txt", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
+            if fileDialog.ShowModal() != wx.ID_OK:
+                return
+            fpath = fileDialog.GetPath()
+
+        # Get data from file, check format, and send to DM
+        try:
+            values = np.loadtxt(fpath)
+            assert (values.ndim == 1 and values.size <= self._device.no_actuators)
+            self._device.proxy.send(values)
+        except Exception as e:
+            message = ('Error loading acuator values.')
+            logger.log.error(message)
+            wx.MessageBox(message, caption='Error')
+
+    def OnSaveActuatorValues(self, event: wx.CommandEvent) -> None:
+        del event
+
+        # Prompt for file to load
+        with wx.FileDialog(self, "Save DM actuator values", wildcard="Data (*.txt)|*.txt",
+                           style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
+            if fileDialog.ShowModal() != wx.ID_OK:
+                return
+            
+            fpath = fileDialog.GetPath()
+
+        # Get actuator values and save to file
+        try:
+            values = self._device.proxy.get_last_actuator_values()
+            np.savetxt(fpath, values)
+        except:
+            logger.log.error("Failed to save DM actuator value data")
+
+        logger.log.info("Saved DM actuator values to file {}".format(fpath))
+
+    def OnLoadModes(self, event: wx.CommandEvent) -> None:
+        del event
+        # Prompt for file to load
+        with wx.FileDialog(self, "Load modes", wildcard="Flat data (*.txt)|*.txt", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
+            if fileDialog.ShowModal() != wx.ID_OK:
+                return
+            fpath = fileDialog.GetPath()
+
+        # Get data from file, check format, and send to DM
+        try:
+            values = np.loadtxt(fpath)
+            assert (values.ndim == 1 and values.size <= self._device.no_actuators)
+            self.set_phase(values, self._device.proxy.get_flat_values())
+        except Exception as e:
+            message = ('Error loading modes.')
+            logger.log.error(message)
+            wx.MessageBox(message, caption='Error')
+
+    def OnSaveModes(self, event: wx.CommandEvent) -> None:
+        del event
+
+        # Prompt for file to load
+        with wx.FileDialog(self, "Save modes", wildcard="Data (*.txt)|*.txt",
+                           style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
+            if fileDialog.ShowModal() != wx.ID_OK:
+                return
+            
+            fpath = fileDialog.GetPath()
+
+        # Get actuator values and save to file
+        try:
+            values = self._device.proxy.get_last_modes()
+            np.savetxt(fpath, values)
+            logger.log.info("Saved modes to file {}".format(fpath))
+        except:
+            logger.log.error("Failed to save modes")
+
+
     def OnSetSystemFlatCalculationParameters(self, event: wx.CommandEvent) -> None:
-    def SetSystemFlatCalculationParameters(self) -> None:
+        del event
 
         inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
             self,
