@@ -83,7 +83,7 @@ class AdaptiveOpticsDevice(Device):
     }
 
     def __init__(
-        self, ao_element_uri, wavefront_uri=None, slm_uri=None, **kwargs
+        self, ao_element_uri, wavefront_uri=None, slm_uri=None, control_matrix=None, system_flat=None, **kwargs
     ):
         # Init will fail if devices it depends on aren't already running, but
         # deviceserver should retry automatically.
@@ -123,9 +123,19 @@ class AdaptiveOpticsDevice(Device):
         # Phase acquisition method
         self.phase_method = "interferometry"
         # Control Matrix
-        self.controlMatrix = None
+        if control_matrix is not None:
+            if isinstance(control_matrix, str):
+                control_matrix = np.loadtxt(control_matrix)
+            self.set_controlMatrix(control_matrix)
+        else:
+            self.controlMatrix = None
         # System correction
-        self.flat_actuators_sys = np.zeros(self.numActuators)
+        if system_flat is not None:
+            if isinstance(system_flat, str):
+                system_flat = np.loadtxt(system_flat)
+            self.flat_actuators_sys = system_flat
+        else:
+            self.flat_actuators_sys = np.zeros(self.numActuators)
         # Last applied zenrike  modes
         self.last_zernike_modes = None
         # Last applied actuators values
