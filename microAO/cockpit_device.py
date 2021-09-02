@@ -40,6 +40,8 @@ import cockpit.interfaces.imager
 import numpy as np
 import Pyro4
 import wx
+import wx.lib.newevent
+import wx.lib.scrolledpanel
 from cockpit import depot, events
 from cockpit.util import logger, userConfig
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
@@ -366,6 +368,162 @@ def log_correction_applied(
         fh.write("Actuator positions applied: %s\n" % (str(actuator_offset)))
 
 
+ModeChangeEvent, EVT_MODE_CHANGED = wx.lib.newevent.NewEvent()
+class _Mode(wx.Panel):
+    """Manual mode selection GUI."""
+
+    def __init__(self, parent, id, value=0):
+        super().__init__(parent)
+
+        # id to identify mode
+        self.id = id
+
+        # Mode value
+        self.value = value
+
+        row_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        
+        # Label for mode
+        self._label = wx.StaticText(self, label = "z{}".format(self.id+1), size=wx.Size(50,-1))
+
+        # Mode slider: drag to set mode
+        default_range = 4   # range of slider
+        self._slider = wx.Slider(self, value=0, minValue=-100, maxValue=100, size=wx.Size(200,-1))
+        self._slider.Bind(wx.EVT_SCROLL, self.OnSlider)
+        self._slider.Bind(wx.EVT_SCROLL_CHANGED, self.OnSliderEnd)
+        self._val_prev = value
+
+        # Adjust mode adjustment range. Influences range of slider.
+        self._slider_range = wx.SpinCtrlDouble(self, initial=default_range, inc=0.01, size=wx.Size(140,-1))
+
+        # Current mode value
+        self._val = wx.SpinCtrlDouble(self, initial=0, inc=0.001, size=wx.Size(140,-1))
+        self._val.SetDigits(4)
+        self.UpdateValueRanges()
+        self._val.SetValue(self.value)
+        self._val.Bind(wx.EVT_SPINCTRLDOUBLE, self.OnModeValueChange)
+
+        # Layout
+        row_sizer.Add(self._label, wx.SizerFlags().CentreVertical())
+        row_sizer.Add(self._val, wx.SizerFlags().Expand())
+        row_sizer.Add(self._slider, wx.SizerFlags().Expand())
+        row_sizer.Add(self._slider_range, wx.SizerFlags().Expand())
+
+        # Set widget sizer
+        self.SetSizerAndFit(row_sizer)
+
+    def OnSlider(self, evt):
+        new_val = self._val_prev + self._slider.GetValue()/100 * self._slider_range.GetValue()
+        self.SetValue(new_val)
+
+    def OnSliderEnd(self, evt):
+        self._val_prev = self.value
+        self.UpdateValueRanges()
+        self._slider.SetValue(0)
+
+    def OnModeValueChange(self, evt):
+        self._val_prev = self._val.GetValue()
+        self.UpdateValueRanges()
+        self.SetValue(self._val.GetValue())
+
+    def UpdateValueRanges(self):
+        self._val.SetMin(self._val_prev - self._slider_range.GetValue())
+        self._val.SetMax(self._val_prev + self._slider_range.GetValue())
+
+    def GetValue(self):
+        return self._val.GetValue()
+
+    def ChangeValue(self, val):
+        # Change value without emitting
+        self.value = val
+        self._val.SetValue(val)
+
+    def SetValue(self, val):
+        # Set value and emit event
+        self.ChangeValue(val)
+
+        evt = ModeChangeEvent(mode=self.id, value= self.value)
+        wx.PostEvent(self, evt)
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, val):
+        self._value = val
+
+class _ModesWindow(wx.Frame):
+    def __init__(self, parent, device):
+        super().__init__(parent)
+        self._panel = _ModesPanel(self, device)
+        self._panel.SetupScrolling()
+        self._sizer = wx.BoxSizer(wx.VERTICAL)
+        self._sizer.Add(self._panel)
+        self.SetSizerAndFit(self._sizer)
+        self.SetTitle('DM mode control')
+
+class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
+    def __init__(self, parent, device):
+        wx.lib.scrolledpanel.ScrolledPanel.__init__(self, parent, -1)
+
+        # Set attributes
+        self._device = device
+        self._n_modes = self._device.no_actuators
+
+        try:
+            modes = self._device.proxy.get_last_modes()
+        except:
+            modes = None
+
+        if modes is not None:
+            self._modes = modes
+        else:
+            self._modes = np.zeros(self._n_modes)
+            
+        # Create root panel and sizer
+        root_panel = wx.Panel(self)
+        root_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # Set headings
+        heading_panel = wx.Panel(root_panel)
+        heading_sizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        headings = [("Mode", 50), ("Value", 140), ("", 200), ("Range", 140)]
+
+        font = wx.Font( wx.FontInfo(10).Bold())
+        for heading in headings:
+            heading_widget = wx.StaticText(heading_panel, label=heading[0], size=wx.Size(heading[1],-1))
+            heading_widget.SetFont(font)
+            heading_sizer.Add(heading_widget)
+
+        heading_panel.SetSizer(heading_sizer)
+        
+        root_sizer.Add(heading_panel)
+
+        # Add control per mode
+        mode_controls = []
+        for i, mode in enumerate(self._modes):
+            mode_control = _Mode(root_panel, id=i, value=mode)
+            mode_control.Bind(EVT_MODE_CHANGED, self.OnMode)
+            mode_controls.append(mode_control)
+            root_sizer.Add(mode_control)
+
+        root_panel.SetSizer(root_sizer)
+        
+        # Set frame sizer
+        frame_sizer = wx.BoxSizer(wx.VERTICAL)
+        frame_sizer.Add(root_panel, wx.SizerFlags().Expand().Border(wx.ALL, 10))
+        self.SetSizerAndFit(frame_sizer)
+
+
+    def OnMode(self, evt):
+        self._modes[evt.mode] = evt.value
+        self._device.proxy.set_phase(
+            self._modes, 
+            offset=self._device.proxy.get_system_flat()
+        )
+
 class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def __init__(self, parent, device):
         super().__init__(parent)
@@ -460,6 +618,9 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         sensorlessAOButton = wx.Button(panel_AO, label="Sensorless AO")
         sensorlessAOButton.Bind(wx.EVT_BUTTON, self.OnSensorlessAO)
 
+        # Button to manually apply aberration
+        manualAberrationButton = wx.Button(panel_control, label="Manual")
+        manualAberrationButton.Bind(wx.EVT_BUTTON, self.OnManualAberration)
 
         panel_flags = wx.SizerFlags(0).Expand().Border(wx.LEFT|wx.RIGHT, 50)
 
@@ -496,6 +657,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         sizer_control = wx.BoxSizer(wx.VERTICAL)
         for widget in [
+            manualAberrationButton,
             loadModesButton,
             saveModesButton,
             loadActuatorsButton,
@@ -648,6 +810,9 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                 )
             cockpit.gui.guiUtils.placeMenuAtMouse(self, menu)
 
+    def OnManualAberration(self, event: wx.CommandEvent) -> None:
+        panel = _ModesWindow(self, self._device)
+        panel.Show()
 
     def OnLoadControlMatrix(self, event: wx.CommandEvent) -> None:
         del event
@@ -880,7 +1045,6 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             logger.log.info("Set sensorless AO metric to: {}".format(metric))
 
     def OnSetSensorlessParameters(self, event: wx.CommandEvent) -> None:
-    def SetSensorlessParameters(self) -> None:
 
         inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
             self,
@@ -916,7 +1080,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
     def initialize(self):
         self.proxy = Pyro4.Proxy(self.uri)
-        self.proxy.set_trigger(cp_ttype="FALLING_EDGE", cp_tmode="ONCE")
+        # self.proxy.set_trigger(cp_ttype="FALLING_EDGE", cp_tmode="ONCE")
         self.no_actuators = self.proxy.get_n_actuators()
 
         # Need initial values for system flat calculations
@@ -1058,6 +1222,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         )
 
         userConfig.setValue("dm_sys_flat", np.ndarray.tolist(sys_flat_values))
+        self.proxy.set_system_flat(sys_flat_values)
         return sys_flat_values, best_z_amps_corrected
 
     def reset(self):
