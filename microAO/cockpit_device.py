@@ -373,115 +373,115 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         self._device = device
 
-        label_setup = cockpit.gui.device.Label(parent=self, label="AO setup")
+        # Create tabbed interface
+        tabs = wx.Notebook(self, size=(350,-1))
+        panel_calibration = wx.Panel(tabs)
+        panel_AO = wx.Panel(tabs)
+        panel_control = wx.Panel(tabs)
+        panel_setup = wx.Panel(tabs)
 
         # Button to select the interferometer ROI
-        selectCircleButton = wx.Button(self, label="Select ROI")
+        selectCircleButton = wx.Button(panel_calibration, label="Select ROI")
         selectCircleButton.Bind(wx.EVT_BUTTON, self.OnSelectROI)
 
         # Visualise current interferometric phase
-        visPhaseButton = wx.Button(self, label="Visualise Phase")
+        visPhaseButton = wx.Button(panel_calibration, label="Visualise Phase")
         visPhaseButton.Bind(wx.EVT_BUTTON, self.OnVisualisePhase)
 
         # Button to calibrate the DM
-        calibrateButton = wx.Button(self, label="Calibrate")
+        calibrateButton = wx.Button(panel_calibration, label="Calibrate")
         calibrateButton.Bind(wx.EVT_BUTTON, self.OnCalibrate)
 
-        characteriseButton = wx.Button(self, label="Characterise")
+        # Button to characterise DM
+        characteriseButton = wx.Button(panel_calibration, label="Characterise")
         characteriseButton.Bind(wx.EVT_BUTTON, self.OnCharacterise)
 
-        sysFlatCalcButton = wx.Button(self, label="Calculate System Flat")
+        # Button to set system flat calculation parameters
+        sysFlatParametersButton = wx.Button(panel_calibration, label="Set system flat parameters")
+        sysFlatParametersButton.Bind(wx.EVT_BUTTON, self.OnSetSystemFlatCalculationParameters)
+        
+        # Button to flatten mirror and apply as system flat
+        sysFlatCalcButton = wx.Button(panel_calibration, label="Generate system flat")
         sysFlatCalcButton.Bind(wx.EVT_BUTTON, self.OnCalcSystemFlat)
 
-        label_use = cockpit.gui.device.Label(parent=self, label="AO use")
-
         # Reset the DM actuators
-        resetButton = wx.Button(self, label="Reset DM")
+        resetButton = wx.Button(panel_AO, label="Reset DM")
         resetButton.Bind(wx.EVT_BUTTON, self.OnResetDM)
 
         # Apply the actuator values correcting the system aberrations
-        applySysFlat = wx.Button(self, label="System Flat")
+        applySysFlat = wx.Button(panel_AO, label="Apply system flat")
         applySysFlat.Bind(wx.EVT_BUTTON, self.OnSystemFlat)
 
         # Apply last actuator values
-        applyLastPatternButton = wx.Button(self, label="Apply last pattern")
+        applyLastPatternButton = wx.Button(panel_AO, label="Apply last pattern")
         applyLastPatternButton.Bind(wx.EVT_BUTTON, self.OnApplyLastPattern)
 
+        # Button to set metric
+        metricSelectButton = wx.Button(panel_AO, label="Set sensorless metric")
+        metricSelectButton.Bind(wx.EVT_BUTTON, self.OnSetMetric)
+
+        # Button to set sensorless correction parameters
+        sensorlessParametersButton = wx.Button(panel_AO, label="Set sensorless parameters")
+        sensorlessParametersButton.Bind(wx.EVT_BUTTON, self.OnSetSensorlessParameters)
+
         # Button to perform sensorless correction
-        sensorlessAOButton = wx.Button(self, label="Sensorless AO")
+        sensorlessAOButton = wx.Button(panel_AO, label="Sensorless AO")
         sensorlessAOButton.Bind(wx.EVT_BUTTON, self.OnSensorlessAO)
 
-        # Right click button to select the metric and other
-        # parameters.
-        # FIXME: this is horrible UI with very low discoverability.
-        # Change to have a proper menu?
-        self.Bind(wx.EVT_CONTEXT_MENU, self.OnContextMenu)
 
-        self._menu_item_id_to_metric: typing.Dict[int, str] = {}
-        self._menu_item_id_to_callback: typing.Dict[
-            int, typing.Callable[[], None]
-        ] = {}
+        panel_flags = wx.SizerFlags(0).Expand().Border(wx.LEFT|wx.RIGHT, 50)
 
-        self._context_menu = wx.Menu()
-
-        for label, metric in [
-            ("Fourier metric", "fourier"),
-            ("Contrast metric", "contrast"),
-            ("Fourier Power metric", "fourier_power"),
-            ("Gradient metric", "gradient"),
-            ("Second Moment metric", "second_moment"),
         ]:
-            menu_item = self._context_menu.AppendRadioItem(wx.ID_ANY, label)
-            self._menu_item_id_to_metric[menu_item.GetId()] = metric
-            self._context_menu.Bind(
-                wx.EVT_MENU,
-                self.OnContextMenuSelectMetric,
-                id=menu_item.GetId(),
-            )
-        self._context_menu.AppendSeparator()
+            sizer_panel_setup.Add(btn, panel_flags)
 
-        for label, callback in [
-            (
-                "Set System Flat Calculation Parameters",
-                self.SetSystemFlatCalculationParameters,
-            ),
-            ("Set Sensorless Parameters", self.SetSensorlessParameters),
-        ]:
-            menu_item = self._context_menu.Append(wx.ID_ANY, label)
-            self._menu_item_id_to_callback[menu_item.GetId()] = callback
-            self._context_menu.Bind(
-                wx.EVT_MENU, self.OnContextMenuCallback, id=menu_item.GetId()
-            )
-
-        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer_calibration = wx.BoxSizer(wx.VERTICAL)
         for btn in [
-            label_setup,
             selectCircleButton,
             visPhaseButton,
             calibrateButton,
             characteriseButton,
-            sysFlatCalcButton,
-            label_use,
+            sysFlatParametersButton,
+            sysFlatCalcButton
+        ]:
+            sizer_calibration.Add(btn, panel_flags)
+
+        sizer_AO = wx.BoxSizer(wx.VERTICAL)
+        for btn in [
             resetButton,
             applySysFlat,
             applyLastPatternButton,
-            sensorlessAOButton,
+            metricSelectButton,
+            sensorlessParametersButton,
+            sensorlessAOButton
         ]:
-            sizer.Add(btn, wx.SizerFlags(0).Expand())
-        self.SetSizer(sizer)
+            sizer_AO.Add(btn, panel_flags)
 
-    def OnContextMenu(self, event: wx.ContextMenuEvent) -> None:
-        cockpit.gui.guiUtils.placeMenuAtMouse(
-            event.GetEventObject(), self._context_menu
-        )
+        sizer_control = wx.BoxSizer(wx.VERTICAL)
+        for widget in [
+            loadModesButton,
+            saveModesButton,
+            loadActuatorsButton,
+            saveActuatorsButton
+        ]:
 
-    def OnContextMenuSelectMetric(self, event: wx.CommandEvent) -> None:
-        metric = self._menu_item_id_to_metric[event.GetId()]
-        self._device.proxy.set_metric(metric)
+            sizer_control.Add(widget, panel_flags)
 
-    def OnContextMenuCallback(self, event: wx.CommandEvent) -> None:
-        callback = self._menu_item_id_to_callback[event.GetId()]
-        callback()
+        panel_calibration.SetSizer(sizer_calibration)
+        panel_AO.SetSizer(sizer_AO)
+        panel_control.SetSizer(sizer_control)
+        panel_setup.SetSizer(sizer_panel_setup)
+
+        # Add pages to tabs
+        tabs.AddPage(panel_setup,"Setup") 
+        tabs.AddPage(panel_calibration,"Calibration") 
+        tabs.AddPage(panel_AO,"AO")
+        tabs.AddPage(panel_control,"Control") 
+
+        tabs.Layout()
+
+        sizer_main = wx.BoxSizer(wx.VERTICAL)
+        sizer_main.Add(tabs, wx.SizerFlags(1).Expand())
+        self.SetSizer(sizer_main)
 
     def OnSelectROI(self, event: wx.CommandEvent) -> None:
         del event
@@ -610,7 +610,10 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                 )
             cockpit.gui.guiUtils.placeMenuAtMouse(self, menu)
 
+
+    def OnSetSystemFlatCalculationParameters(self, event: wx.CommandEvent) -> None:
     def SetSystemFlatCalculationParameters(self) -> None:
+
         inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
             self,
             "Set system flat parameters",
@@ -637,7 +640,31 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                 [int(z_ind) for z_ind in inputs[-1][1:-1].split(", ")]
             )
 
+    def OnSetMetric(self, event: wx.CommandEvent) -> None:
+        del event
+
+        metrics = dict([
+            ("Fourier metric", "fourier"),
+            ("Contrast metric", "contrast"),
+            ("Fourier Power metric", "fourier_power"),
+            ("Gradient metric", "gradient"),
+            ("Second Moment metric", "second_moment"),
+        ])
+
+        dlg = wx.SingleChoiceDialog(
+            self, "Select metric", 'Metric',
+            list(metrics.keys()),
+            wx.CHOICEDLG_STYLE
+            )
+        if dlg.ShowModal() == wx.ID_OK:
+            metric = metrics[dlg.GetStringSelection()]
+            self._device.proxy.set_metric(metric)
+
+            logger.log.info("Set sensorless AO metric to: {}".format(metric))
+
+    def OnSetSensorlessParameters(self, event: wx.CommandEvent) -> None:
     def SetSensorlessParameters(self) -> None:
+
         inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
             self,
             "Set sensorless AO parameters",
