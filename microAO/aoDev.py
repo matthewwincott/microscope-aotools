@@ -340,6 +340,7 @@ class AdaptiveOpticsDevice(Device):
 
     @Pyro4.expose
     def set_system_flat(self, system_flat):
+        _logger.info("Set system flat")
         self.flat_actuators_sys = system_flat
 
     @Pyro4.expose
@@ -481,6 +482,7 @@ class AdaptiveOpticsDevice(Device):
     def set_controlMatrix(self, controlMatrix):
         self.controlMatrix = controlMatrix
         aoAlg.set_controlMatrix(controlMatrix)
+        _logger.info("Set control matrix")
         return
 
     @Pyro4.expose
