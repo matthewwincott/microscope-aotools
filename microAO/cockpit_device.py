@@ -477,18 +477,9 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
 
         # Set attributes
         self._device = device
-        self._n_modes = self._device.no_actuators
+        control_matrix = self._device.proxy.get_controlMatrix()
+        self._n_modes = control_matrix.shape[1]
 
-        try:
-            modes = self._device.proxy.get_last_modes()
-        except:
-            modes = None
-
-        if modes is not None:
-            self._modes = modes
-        else:
-            self._modes = np.zeros(self._n_modes)
-            
         # Create root panel and sizer
         root_panel = wx.Panel(self)
         root_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -510,11 +501,16 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         root_sizer.Add(heading_panel)
 
         # Add control per mode
-        mode_controls = []
-        for i, mode in enumerate(self._modes):
+        modes = np.zeros(self._n_modes)
+        last_modes = self._device.proxy.get_last_modes()
+        if last_modes is not None:
+            modes += last_modes
+
+        self._mode_controls = []
+        for i, mode in enumerate(modes):
             mode_control = _Mode(root_panel, id=i, value=mode)
             mode_control.Bind(EVT_MODE_CHANGED, self.OnMode)
-            mode_controls.append(mode_control)
+            self._mode_controls.append(mode_control)
             root_sizer.Add(mode_control)
 
         root_panel.SetSizer(root_sizer)
