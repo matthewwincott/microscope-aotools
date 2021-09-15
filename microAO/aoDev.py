@@ -483,7 +483,7 @@ class AdaptiveOpticsDevice(Device):
     def get_controlMatrix(self):
         if np.any(self.controlMatrix) is None:
             raise Exception(
-                "No control matrix calculated. Please calibrate the AO element"
+                "No control matrix available. Please load a control matrix or calibrate the AO element"
             )
         else:
             return self.controlMatrix
