@@ -995,10 +995,10 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         # Get data from file, check format, and send to DM
         try:
             values = np.loadtxt(fpath)
-            assert (values.ndim == 1 and values.size <= self._device.no_actuators)
-            self.set_phase(values, self._device.proxy.get_flat_values())
+            assert (values.ndim == 1)
+            self._device.proxy.set_phase(values, self._device.proxy.get_system_flat())
         except Exception as e:
-            message = ('Error loading modes.')
+            message = ('Error loading modes. ({})'.format(e))
             logger.log.error(message)
             wx.MessageBox(message, caption='Error')
 
