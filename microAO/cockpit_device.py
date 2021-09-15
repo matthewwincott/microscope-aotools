@@ -387,10 +387,9 @@ class _Mode(wx.Panel):
         self._label = wx.StaticText(self, label = "z{}".format(self.id+1), size=wx.Size(50,-1))
 
         # Mode slider: drag to set mode
-        default_range = 4   # range of slider
+        default_range = 1.5   # range of slider
         self._slider = wx.Slider(self, value=0, minValue=-100, maxValue=100, size=wx.Size(200,-1))
         self._slider.Bind(wx.EVT_SCROLL, self.OnSlider)
-        self._slider.Bind(wx.EVT_SCROLL_CHANGED, self.OnSliderEnd)
         self._val_prev = value
 
         # Adjust mode adjustment range. Influences range of slider.
