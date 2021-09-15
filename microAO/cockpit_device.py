@@ -520,14 +520,39 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         frame_sizer.Add(root_panel, wx.SizerFlags().Expand().Border(wx.ALL, 10))
         self.SetSizerAndFit(frame_sizer)
 
+        # Start a timer to update modes.
+        self._timer = wx.Timer(self)
+        self._timer.Start(500)
+        self.Bind(wx.EVT_TIMER, self.RefreshModes, self._timer)
 
     def OnMode(self, evt):
-        self._modes[evt.mode] = evt.value
+        # self._modes[evt.mode] = evt.value
+        modes = self.GetModes()
         self._device.proxy.set_phase(
-            self._modes, 
+            modes, 
             offset=self._device.proxy.get_system_flat()
         )
 
+    def GetModes(self):
+        modes = []
+        for mode_control in self._mode_controls:
+            modes.append(mode_control.value)
+        
+        return modes
+
+    def RefreshModes(self, evt):
+        modes = self._device.proxy.get_last_modes()
+        if modes is not None:
+            self.UpdateModes(modes)
+
+    def UpdateModes(self, modes):
+        # Add control per mode
+        for i, value in enumerate(modes):
+            mode_control = self._mode_controls[i]
+            if value != mode_control.value:
+                mode_control.ChangeValue(value)
+                mode_control.UpdateValueRanges()
+    
 class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def __init__(self, parent, device):
         super().__init__(parent)
