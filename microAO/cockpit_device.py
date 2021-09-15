@@ -416,19 +416,27 @@ class _Mode(wx.Panel):
         new_val = self._val_prev + self._slider.GetValue()/100 * self._slider_range.GetValue()
         self.SetValue(new_val)
 
-    def OnSliderEnd(self, evt):
-        self._val_prev = self.value
-        self.UpdateValueRanges()
-        self._slider.SetValue(0)
+        # Reset slider and ranges when slide end (mouse released)
+        if not wx.GetMouseState().LeftIsDown():
+            self._val_prev = self.value
+            self.UpdateValueRanges()
+            self._slider.SetValue(0)
 
     def OnModeValueChange(self, evt):
-        self._val_prev = self._val.GetValue()
-        self.UpdateValueRanges()
-        self.SetValue(self._val.GetValue())
+        new_val = self._val.GetValue()
+        self._val_prev = new_val
+        self.UpdateValueRanges(new_val)
+        self.SetValue(new_val)
 
-    def UpdateValueRanges(self):
-        self._val.SetMin(self._val_prev - self._slider_range.GetValue())
-        self._val.SetMax(self._val_prev + self._slider_range.GetValue())
+    def UpdateValueRanges(self, middle=None, range=None):
+        middle = self.GetValue()
+        if range is None:
+            range = self._slider_range.GetValue()
+        if middle is None:
+            middle = self.value
+
+        self._val.SetMin(middle - range)
+        self._val.SetMax(middle + range)
 
     def GetValue(self):
         return self._val.GetValue()
