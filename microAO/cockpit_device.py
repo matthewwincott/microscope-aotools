@@ -381,6 +381,9 @@ class _Mode(wx.Panel):
         # Mode value
         self.value = value
 
+        # Store focus state
+        self.focus = False
+
         row_sizer = wx.BoxSizer(wx.HORIZONTAL)
         
         # Label for mode
@@ -401,6 +404,8 @@ class _Mode(wx.Panel):
         self.UpdateValueRanges()
         self._val.SetValue(self.value)
         self._val.Bind(wx.EVT_SPINCTRLDOUBLE, self.OnModeValueChange)
+        self._val.Bind(wx.EVT_SET_FOCUS, self.OnModeGetFocus)
+        self._val.Bind(wx.EVT_KILL_FOCUS, self.OnModeLoseFocus)
 
         # Layout
         row_sizer.Add(self._label, wx.SizerFlags().CentreVertical())
@@ -408,7 +413,7 @@ class _Mode(wx.Panel):
         row_sizer.Add(self._slider, wx.SizerFlags().Expand())
         row_sizer.Add(self._slider_range, wx.SizerFlags().Expand())
 
-        # Set widget sizer
+        # Set widget sizerOnModeValue
         self.SetSizerAndFit(row_sizer)
 
     def OnSlider(self, evt):
@@ -426,6 +431,12 @@ class _Mode(wx.Panel):
         self._val_prev = new_val
         self.UpdateValueRanges(new_val)
         self.SetValue(new_val)
+    
+    def OnModeGetFocus(self, evt):
+        self.focus = True
+
+    def OnModeLoseFocus(self, evt):
+        self.focus = False
 
     def UpdateValueRanges(self, middle=None, range=None):
         middle = self.GetValue()
@@ -548,7 +559,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         # Add control per mode
         for i, value in enumerate(modes):
             mode_control = self._mode_controls[i]
-            if value != mode_control.value:
+            if value != mode_control.value and not mode_control.focus:
                 mode_control.ChangeValue(value)
                 mode_control.UpdateValueRanges()
     
