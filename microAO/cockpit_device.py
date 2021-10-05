@@ -417,11 +417,19 @@ class _Mode(wx.Panel):
         self.SetSizerAndFit(row_sizer)
 
     def OnSlider(self, evt):
+        # Assign focus to control if sliding
+        self.focus = True
+
+        # Set value
         new_val = self._val_prev + self._slider.GetValue()/100 * self._slider_range.GetValue()
         self.SetValue(new_val)
 
         # Reset slider and ranges when slide end (mouse released)
         if not wx.GetMouseState().LeftIsDown():
+            # Lose focus as released
+            self.focus = False
+
+            # Update value ranges and reset slider to middle
             self._val_prev = self.value
             self.UpdateValueRanges()
             self._slider.SetValue(0)
