@@ -638,7 +638,13 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         super().__init__(parent)
         self.SetDoubleBuffered(True)
 
+        # Store reference to AO device
         self._device = device
+
+        # Dict to store reference to child component ids
+        self._components = {
+            "modes_control": None
+        }
 
         # Create tabbed interface
         tabs = wx.Notebook(self, size=(350,-1))
@@ -920,8 +926,21 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             cockpit.gui.guiUtils.placeMenuAtMouse(self, menu)
 
     def OnManualAberration(self, event: wx.CommandEvent) -> None:
-        panel = _ModesWindow(self, self._device)
-        panel.Show()
+        # Try to find modes window
+        try:
+            window = self.FindWindowById(self._components["modes_control"])
+        except:
+            window = None
+
+        # If not found, create new window and save reference to its id
+        if window is None:
+            window = _ModesWindow(self, self._device)    
+            self._components["modes_control"] = window.GetId()
+
+        # Show window and bring to front
+        window.Show()
+        window.Raise()            
+
 
     def OnLoadControlMatrix(self, event: wx.CommandEvent) -> None:
         del event
