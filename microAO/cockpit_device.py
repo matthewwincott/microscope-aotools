@@ -981,6 +981,10 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         saveActuatorsButton = wx.Button(panel_control, label="Save actuators")
         saveActuatorsButton.Bind(wx.EVT_BUTTON, self.OnSaveActuatorValues)
 
+        # Button to set current actuator values as system flat
+        setCurrentAsFlatButton = wx.Button(panel_control, label="Set current as flat")
+        setCurrentAsFlatButton.Bind(wx.EVT_BUTTON, self.OnSetCurrentAsFlat)
+
         # Button to select the interferometer ROI
         selectCircleButton = wx.Button(panel_calibration, label="Select ROI")
         selectCircleButton.Bind(wx.EVT_BUTTON, self.OnSelectROI)
@@ -1077,7 +1081,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             loadModesButton,
             saveModesButton,
             loadActuatorsButton,
-            saveActuatorsButton
+            saveActuatorsButton,
+            setCurrentAsFlatButton
         ]:
 
             sizer_control.Add(widget, panel_flags)
@@ -1516,6 +1521,12 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         # Show window and bring to front
         window.Show()
         window.Raise()           
+    
+    def OnSetCurrentAsFlat(self, event: wx.CommandEvent) -> None:
+        """ Sets current actuator values as the new flat """
+        current_actuator_values = self._device.proxy.get_last_actuator_values()
+        userConfig.setValue("dm_sys_flat", np.ndarray.tolist(current_actuator_values))
+        self._device.proxy.set_system_flat(current_actuator_values)
 
 
 class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
