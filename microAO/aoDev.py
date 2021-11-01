@@ -135,7 +135,7 @@ class AdaptiveOpticsDevice(Device):
                 system_flat = np.loadtxt(system_flat)
             self.flat_actuators_sys = system_flat
         else:
-            self.flat_actuators_sys = np.zeros(self.numActuators)
+            self.flat_actuators_sys = np.zeros(self.numActuators) + 0.5
         # Last applied zenrike  modes
         self.last_zernike_modes = None
         # Last applied actuators values
@@ -361,6 +361,7 @@ class AdaptiveOpticsDevice(Device):
     @Pyro4.expose
     def send(self, values):
         _logger.info("Sending pattern to AO element")
+        _logger.debug("Sending values: {}".format(values))
 
         ttype, tmode = self.get_trigger()
         if ttype is not "SOFTWARE":
@@ -501,6 +502,9 @@ class AdaptiveOpticsDevice(Device):
         last_ac = np.copy(self.last_actuator_values)
         self.send(np.zeros(self.numActuators) + 0.5)
         self.last_actuator_values = last_ac
+
+        if self.last_zernike_modes is not None:
+            self.last_zernike_modes = np.zeros(len(self.last_zernike_modes))
 
     @Pyro4.expose
     def make_mask(self, radius):
