@@ -1698,9 +1698,11 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.zernike_applied = None
 
         # Excercise the DM to remove residual static and then set to 0 position
-        for _ in range(50):
-            self.send(np.random.rand(self.no_actuators))
-            time.sleep(0.01)
+        if self.config.get('exercise_on_startup', 'true').lower() == 'true':
+            for _ in range(50):
+                self.send(np.random.rand(self.no_actuators))
+                time.sleep(0.01)
+        
         self.reset()
 
         # Load values from config
