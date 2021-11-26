@@ -52,6 +52,7 @@ from matplotlib import cm
 from matplotlib.colors import rgb2hex, Normalize
 from wx.lib.floatcanvas.FloatCanvas import FloatCanvas
 import json
+import h5py
 
 import microAO
 from microAO.aoDev import AdaptiveOpticsDevice
@@ -80,6 +81,7 @@ _DEFAULT_ZERNIKE_MODE_NAMES = {
 # Pubsub events
 PUBSUB_SET_ACTUATORS = 'set actuators'
 PUBSUB_SET_PHASE = 'set phase'
+PUBSUB_SENSORLESS_RESULTS = 'sensorless results'
 
 def _np_grey_img_to_wx_image(np_img: np.ndarray) -> wx.Image:
     img_min = np.min(np_img)
@@ -153,11 +155,17 @@ def _computePowerSpectrum(interferogram):
     return power_spectrum
 
 
-def _np_save_with_timestamp(data, basename_prefix):
+def _get_timestamped_log_path(prefix):
     dirname = wx.GetApp().Config["log"].getpath("dir")
     timestamp = time.strftime("%Y%m%d_%H%M", time.gmtime())
-    basename = basename_prefix + "_" + timestamp
-    np.save(os.path.join(dirname, basename), data)
+    basename = prefix + "_" + timestamp    
+    path = os.path.join(dirname, basename)
+
+    return path
+
+def _np_save_with_timestamp(data, basename_prefix):
+    fpath = _get_timestamped_log_path(basename_prefix)
+    np.save(fpath, data)
 
 
 class _ROISelect(wx.Frame):
@@ -642,32 +650,34 @@ class _CharacterisationAssayViewer(wx.Frame):
         frame_sizer.Add(root_panel, wx.SizerFlags().Expand())
         self.SetSizerAndFit(frame_sizer)
 
-
 def log_correction_applied(
     correction_stack,
     zernike_applied,
     nollZernike,
     sensorless_correct_coef,
     actuator_offset,
+    metric_stack,
+    z_steps
 ):
     # Save full stack of images used
-    _np_save_with_timestamp(
-        np.asarray(correction_stack),
-        "sensorless_AO_correction_stack",
-    )
+    # _np_save_with_timestamp(
+    #     np.asarray(correction_stack),
+    #     "sensorless_AO_correction_stack",
+    # )
 
-    _np_save_with_timestamp(
-        zernike_applied,
-        "sensorless_AO_zernike_applied",
-    )
+    # _np_save_with_timestamp(
+    #     zernike_applied,
+    #     "sensorless_AO_zernike_applied",
+    # )
 
-    _np_save_with_timestamp(nollZernike, "sensorless_AO_nollZernike")
-    _np_save_with_timestamp(
-        sensorless_correct_coef,
-        "sensorless_correct_coef",
-    )
+    # _np_save_with_timestamp(nollZernike, "sensorless_AO_nollZernike")
+    # _np_save_with_timestamp(
+    #     sensorless_correct_coef,
+    #     "sensorless_correct_coef",
+    # )
 
-    _np_save_with_timestamp(actuator_offset, "ac_pos_sensorless")
+    # _np_save_with_timestamp(actuator_offset, "ac_pos_sensorless")
+    # _np_save_with_timestamp(metric_stack, "sensorless_AO_metric_stack")
 
     ao_log_filepath = os.path.join(
         wx.GetApp().Config["log"].getpath("dir"),
@@ -680,6 +690,29 @@ def log_correction_applied(
         fh.write("Aberrations measured: %s\n" % (sensorless_correct_coef))
         fh.write("Actuator positions applied: %s\n" % (str(actuator_offset)))
 
+    # write data to hdf5 file
+    ao_log_filepath = _get_timestamped_log_path('sensorless_AO_logger')+'.h5'
+
+    # Write data to file
+    with h5py.File(ao_log_filepath, 'w') as f:
+        # Assemble data to write
+        data = [('timestamp', time.strftime("%Y%m%d_%H%M", time.gmtime())),
+                ('correction_stack',np.asarray(correction_stack)),
+                ('zernike_applied',zernike_applied),
+                ('nollZernike',nollZernike),
+                ('sensorless_correct_coef',sensorless_correct_coef),
+                ('actuator_offset',actuator_offset),
+                ('metric_stack',metric_stack),
+                ('z_steps',z_steps),
+            ]
+        
+        # Write assembled data
+        for datum in data:
+            try:
+                f.create_dataset(datum[0], data=datum[1])
+            except Exception as e:
+                print('Failed to write: {}'.format(datum[0]), e)
+        
 class FloatCtrl(wx.TextCtrl):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -928,6 +961,92 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         if modes is not None:
             self.UpdateModes(modes)
 
+# class _SensorlessResultsViewer(wx.Frame):
+#     def __init__(self, parent, device):
+#         super().__init__(parent)
+        
+#         self._panel.SetupScrolling()
+        
+#         self._sizer = wx.BoxSizer(wx.VERTICAL)
+#         self._sizer.Add(self._panel)
+#         self.SetSizerAndFit(self._sizer)
+#         self.SetTitle('SensorlessResultsViewer')
+
+class _SensorlessResultsViewer(wx.Frame):
+    def __init__(self, parent, data, **kwargs):
+        super().__init__(parent, title="Metric viewer")
+        root_panel = wx.Panel(self)
+
+
+        figure = Figure()
+
+        self.ax = figure.add_subplot(1, 1, 1)
+
+        self.data = data
+        
+        if self.data is not None:
+            self.update()
+
+        self.canvas = FigureCanvas(root_panel, wx.ID_ANY, figure)
+
+        panel_sizer = wx.BoxSizer(wx.VERTICAL)
+        panel_sizer.Add(self.canvas, wx.SizerFlags(1).Expand())
+        root_panel.SetSizer(panel_sizer)
+
+        frame_sizer = wx.BoxSizer(wx.VERTICAL)
+        frame_sizer.Add(root_panel, wx.SizerFlags().Expand())
+        self.SetSizerAndFit(frame_sizer)
+
+        # Subscribe to pubsub events
+        events.subscribe(PUBSUB_SENSORLESS_RESULTS, self.HandleSensorlessData)
+        
+
+    def update(self):
+        # Calclate required data
+        n_images = len(self.data['metric_stack'])
+        n_z_steps = len(self.data['z_steps'])
+        nollZernike = self.data['nollZernike']
+        n_modes = n_images // n_z_steps
+
+        if n_images < 1:
+            return
+
+        # Compute mode boundaries and labels
+        mode_boundaries = np.arange(0, n_images, n_z_steps)
+        vlines = list(mode_boundaries[1:] - 0.5)
+        xticks = mode_boundaries + (n_z_steps - 1) / 2 
+        xticklabels = ['z-{}'.format(z) for z in nollZernike[0:n_modes] ]
+
+        # Set up x,y data
+        x = np.arange(0,n_images)
+        y = self.data['metric_stack']
+
+        # Plot data
+        self.ax.clear()
+        self.ax.plot(x,y, '-x')
+
+        for x_pos in vlines:
+            self.ax.axvline(x_pos, color='gray')
+
+        self.ax.xaxis.set_ticks(xticks)
+        
+        self.ax.xaxis.set_ticklabels(xticklabels)
+
+        self.ax.set_xlim(min(x)-0.5, max(x)+0.5)
+
+        self.ax.set_xlabel('Mode')
+        self.ax.set_ylabel('Metric value')
+        self.ax.set_title('Metric vs iteration (grouped by mode)')
+
+        self.canvas.draw()
+
+    def set_data(self, data):
+        self.data = data
+        self.update()
+    
+    def HandleSensorlessData(self, data):
+        self.set_data(data)
+
 
 class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def __init__(self, parent, device):
@@ -939,7 +1058,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         # Dict to store reference to child component ids
         self._components = {
-            "modes_control": None
+            "modes_control": None,
+            "sensorless_results": None
         }
 
         # Create tabbed interface
@@ -1229,7 +1349,20 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                     lambda event, camera=camera: action(camera),
                     menu_item,
                 )
+
             cockpit.gui.guiUtils.placeMenuAtMouse(self, menu)
+        
+        # Create results viewer
+        try:
+            window = self.FindWindowById(self._components["sensorless_results"])
+        except:
+            window = None
+
+        if window is None:
+            window = _SensorlessResultsViewer(None, None)
+            self._components["sensorless_results"] = window.GetId()
+
+            window.Show()
 
     def OnManualAberration(self, event: wx.CommandEvent) -> None:
         # Try to find modes window
@@ -1245,7 +1378,10 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         # Show window and bring to front
         window.Show()
-        window.Raise()            
+        window.Raise()
+
+    def HandleSensorlessResults(self, e):
+        print('e', e)      
 
 
     def OnLoadControlMatrix(self, event: wx.CommandEvent) -> None:
@@ -1469,8 +1605,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         dlg = wx.SingleChoiceDialog(
             self, "Select metric", 'Metric',
-            list(metrics.keys()),
-            wx.CHOICEDLG_STYLE
+        wx.CHOICEDLG_STYLE
             )
         if dlg.ShowModal() == wx.ID_OK:
             metric = metrics[dlg.GetStringSelection()]
@@ -1558,7 +1693,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.camera = None
         self.correction_stack = []
         self.metric_stack = []
-        self.sensorless_correct_coef = np.zeros(self.no_actuators)
+        self.sensorless_correct_coef = np.zeros(self.no_actuators)          # Measured abberrations
         self.z_steps = np.linspace(self.z_min, self.z_max, self.numMes)
         self.zernike_applied = None
 
@@ -1706,11 +1841,10 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.camera = camera
         self.correction_stack = []  # list of corrected images
         self.metric_stack = []  # list of metrics for corrected images
-        self.sensorless_correct_coef = np.zeros(self.no_actuators)
-        # Zernike modes to apply
-        self.z_steps = np.linspace(self.z_min, self.z_max, self.numMes)
-        self.zernike_applied = np.zeros((0, self.no_actuators))
-        self.metric_calculated = np.zeros(1)
+        self.sensorless_correct_coef = np.zeros(self.no_actuators) # Z modes to apply
+        self.z_steps = np.linspace(self.z_min, self.z_max, self.numMes) # biases to apply per Z mode
+        self.zernike_applied = np.zeros((0, self.no_actuators)) # Array of all z aberrations to apply during experiment
+        self.metric_calculated = np.array(())
 
         logger.log.debug("Subscribing to camera events")
         # Subscribe to camera events
@@ -1770,7 +1904,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             )
             # Store image for current applied phase
             self.correction_stack.append(np.ndarray.tolist(image))
-            self.metric_stack.append(np.ndarray.tolist(self.metric_calculated))
             wx.CallAfter(self.correctSensorlessProcessing)
         else:
             logger.log.error(
@@ -1812,6 +1945,9 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         )
         self.actuator_offset = ac_pos_correcting
         self.sensorless_correct_coef[nollInd - 1] += amp_to_correct
+        self.metric_calculated = metrics_calculated
+        for metric in metrics_calculated:
+            self.metric_stack.append(metric.astype('float'))
         # logger.log.debug(
         #     "Aberrations measured: ", self.sensorless_correct_coef
         # )
@@ -1849,12 +1985,26 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 self.nollZernike,
                 self.sensorless_correct_coef,
                 self.actuator_offset,
+                self.metric_stack,
+                self.z_steps
             )
 
             logger.log.debug(
                 "Actuator positions applied: %s", self.actuator_offset
             )
             self.send(self.actuator_offset)
+        
+        # Update/create metric plot
+        sensorless_data = {
+            'correction_stack': self.correction_stack,
+            'metric_stack': self.metric_stack,
+            'nollZernike': self.nollZernike,
+            'z_steps': self.z_steps
+        }
+
+        # Publish data
+        events.publish(PUBSUB_SENSORLESS_RESULTS, sensorless_data)
+
 
         # Take image, but ensure it's called after the phase is applied
         time.sleep(0.1)
