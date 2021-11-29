@@ -252,7 +252,7 @@ class AdaptiveOpticsFunctions():
     def get_zernike_modes(self, image_unwrap, noZernikeModes, resize_dim = 128):
         #Resize image
         original_dim = int(np.shape(image_unwrap)[0])
-        while original_dim%resize_dim is not 0:
+        while original_dim%resize_dim != 0:
             resize_dim -= 1
 
         if resize_dim < original_dim/resize_dim:
