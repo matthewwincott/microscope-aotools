@@ -857,7 +857,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         ])
 
         dlg = wx.SingleChoiceDialog(
-            self, "Select metric", 'Metric',
+            self, "Select metric", "Metric", list(metrics.keys()),
         wx.CHOICEDLG_STYLE
             )
         if dlg.ShowModal() == wx.ID_OK:
