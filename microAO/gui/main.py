@@ -582,29 +582,14 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         action = self._device.correctSensorlessSetup
 
-        cameras = depot.getActiveCameras()
-        if not cameras:
-            wx.MessageBox(
-                "There are no cameras enabled.", caption="No cameras active"
-            )
-        elif len(cameras) == 1:
-            action(cameras[0])
-        else:
-            menu = wx.Menu()
-            for camera in cameras:
-                menu_item = menu.Append(
-                    wx.ID_ANY,
-                    "Perform sensorless AO with %s camera"
-                    % camera.descriptiveName,
-                )
-                self.Bind(
-                    wx.EVT_MENU,
-                    lambda event, camera=camera: action(camera),
-                    menu_item,
-                )
+        camera = self._device.getCamera()
 
-            cockpit.gui.guiUtils.placeMenuAtMouse(self, menu)
-        
+        if camera is None:
+            return
+
+        # Start sensorless AO
+        action(camera)
+
         # Create results viewer
         try:
             window = self.FindWindowById(self._components["sensorless_results"])

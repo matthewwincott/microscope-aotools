@@ -34,6 +34,7 @@ import time
 import cockpit.devices
 import cockpit.devices.device
 import cockpit.interfaces.imager
+from cockpit import depot
 import numpy as np
 import Pyro4
 import wx
@@ -469,6 +470,28 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Take image, but ensure it's called after the phase is applied
         time.sleep(0.1)
         wx.CallAfter(wx.GetApp().Imager.takeImage)
+
+    def getCamera(self):
+        cameras = depot.getActiveCameras()
+        
+        camera = None
+        if not cameras:
+            wx.MessageBox(
+                "There are no cameras enabled.", caption="No cameras active"
+            )
+        elif len(cameras) == 1:
+            camera = cameras[0]
+        else:
+            cameras_dict = dict([(camera.descriptiveName, camera) for camera in cameras])
+
+            dlg = wx.SingleChoiceDialog(
+                None, "Select camera", 'Camera', list(cameras_dict.keys()),
+            wx.CHOICEDLG_STYLE
+                )
+            if dlg.ShowModal() == wx.ID_OK:
+                camera = cameras_dict[dlg.GetStringSelection()]
+
+        return camera
 
     def send(self, actuator_values):
         # Send values to device
