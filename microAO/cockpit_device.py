@@ -155,6 +155,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.sensorless_correct_coef = np.zeros(self.no_actuators)          # Measured abberrations
         self.z_steps = np.linspace(self.z_min, self.z_max, self.numMes)
         self.zernike_applied = None
+        self.start_from_flat = True
+
 
         # Excercise the DM to remove residual static and then set to 0 position
         if self.config.get('exercise_on_startup', 'true').lower() == 'true':
@@ -298,7 +300,11 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.checkIfCalibrated()
 
         # Shared state for the new image callbacks during sensorless
-        self.actuator_offset = userConfig.getValue("dm_sys_flat")
+        if self.start_from_flat:
+            self.actuator_offset = userConfig.getValue("dm_sys_flat")
+        else:
+            self.actuator_offset = self.proxy.get_last_actuator_values()
+
         self.camera = camera
         self.correction_stack = []  # list of corrected images
         self.metric_stack = []  # list of metrics for corrected images
