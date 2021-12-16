@@ -1,3 +1,5 @@
+import re
+
 import wx
 
 from cockpit.gui.guiUtils import FLOATVALIDATOR
@@ -14,6 +16,34 @@ class FloatCtrl(wx.TextCtrl):
             val = None
 
         return val
+
+class FilterModesCtrl(wx.TextCtrl):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def GetValue(self):
+        # Get values as list
+        modes_str = super().GetValue()
+        modes_list = re.split(',|;',modes_str)
+
+        # Set up patterns
+        regex_range = re.compile("^(\d+)-(\d+)$")
+        regex_number = re.compile("^\d+$")
+
+        # Check string against pattern and add to modes list if a match
+        modes = []
+        for mode in modes_list:
+            if regex_range.match(mode):
+                parts = mode.split("-")
+                start = int(parts[0])
+                end = int(parts[1]) + 1
+                modes = modes + list(range(start, end))
+            
+            if regex_number.match(mode):
+                modes = modes + [int(mode)]
+
+        return modes
+
 ValueChangeEvent, EVT_VALUE = wx.lib.newevent.NewEvent()
 class MinMaxSliderCtrl(wx.Panel):
     """Slider control component."""

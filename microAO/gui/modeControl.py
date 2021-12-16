@@ -8,7 +8,7 @@ import wx.lib.scrolledpanel
 import numpy as np
 
 from microAO.events import *
-from microAO.gui.common import FloatCtrl
+from microAO.gui.common import FloatCtrl, FilterModesCtrl
 
 
 _DEFAULT_ZERNIKE_MODE_NAMES = {
@@ -177,6 +177,16 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         root_panel = wx.Panel(self)
         root_sizer = wx.BoxSizer(wx.VERTICAL)
 
+        # Filter modes control
+        filter_modes_lbl = wx.StaticText(root_panel, label="Mode filter")
+        self.filter_modes = FilterModesCtrl(root_panel)
+        self.filter_modes.ChangeValue("{}-{}".format(1, self._n_modes))
+        self.filter_modes.Bind(wx.EVT_TEXT, self.OnFilterModes)
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+        hbox.Add(filter_modes_lbl, wx.SizerFlags().Centre().Border(wx.RIGHT, 8))
+        hbox.Add(self.filter_modes, wx.SizerFlags().Centre())
+        root_sizer.Add(hbox, wx.SizerFlags().Border(wx.BOTTOM, 8))
+
         # Set headings
         heading_panel = wx.Panel(root_panel)
         heading_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -214,6 +224,9 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
             self._mode_controls.append(mode_control)
             root_sizer.Add(mode_control)
 
+        # Show only filtered modes
+        self.FilterModes()
+
         root_panel.SetSizer(root_sizer)
         
         # Set frame sizer
@@ -223,6 +236,20 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
 
         # Subscribe to pubsub events
         events.subscribe(PUBSUB_SET_PHASE, self.HandleSetPhase)
+
+    def FilterModes(self):
+        # Show only filtered modes
+        modes_filtered = self.filter_modes.GetValue()
+        for control in self._mode_controls:
+            if control.id+1 in modes_filtered:
+                control.Show()
+            else:
+                control.Hide()
+            
+        self.Layout()
+
+    def OnFilterModes(self, evt):
+        self.FilterModes()
 
     def OnMode(self, evt):
         # self._modes[evt.mode] = evt.value
