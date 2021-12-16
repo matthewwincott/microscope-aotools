@@ -17,6 +17,7 @@ import aotools
 import typing
 
 from microAO.gui.modeControl import ModesControl
+from microAO.gui.remoteFocus import RemoteFocusControl
 from microAO.gui.sensorlessViewer import SensorlessResultsViewer
 from microAO.gui.DMViewer import DMViewer
 
@@ -414,6 +415,10 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         DMViewButton = wx.Button(panel_control, label="DM view")
         DMViewButton.Bind(wx.EVT_BUTTON, self.OnDMViewer)
 
+        # Button to show remote focus dialog
+        RemoteFocusButton = wx.Button(panel_control, label="Remote focus")
+        RemoteFocusButton.Bind(wx.EVT_BUTTON, self.OnRemoteFocus)
+
         panel_flags = wx.SizerFlags(0).Expand().Border(wx.LEFT|wx.RIGHT, 50)
 
         sizer_panel_setup = wx.BoxSizer(wx.VERTICAL)
@@ -455,7 +460,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             saveModesButton,
             loadActuatorsButton,
             saveActuatorsButton,
-            setCurrentAsFlatButton
+            setCurrentAsFlatButton,
+            RemoteFocusButton
         ]:
 
             sizer_control.Add(widget, panel_flags)
@@ -896,6 +902,22 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         if window is None:
             window = DMViewer(self, self._device)    
             self._components["dm_view"] = window.GetId()
+
+        # Show window and bring to front
+        window.Show()
+        window.Raise()           
+
+    def OnRemoteFocus(self, event: wx.CommandEvent) -> None:
+        # Try to find remote focus window
+        try:
+            window = self.FindWindowById(self._components["remote_focus"])
+        except:
+            window = None
+
+        # If not found, create new window and save reference to its id
+        if window is None:
+            window = RemoteFocusControl(self, self._device)    
+            self._components["remote_focus"] = window.GetId()
 
         # Show window and bring to front
         window.Show()
