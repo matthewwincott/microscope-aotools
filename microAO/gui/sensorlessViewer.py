@@ -45,7 +45,7 @@ class SensorlessResultsViewer(wx.Frame):
         n_images = len(self.data['metric_stack'])
         n_z_steps = len(self.data['z_steps'])
         nollZernike = self.data['nollZernike']
-        n_modes = n_images // n_z_steps
+        iterations = self.data['iterations']
 
         if n_images < 1:
             return
@@ -54,7 +54,8 @@ class SensorlessResultsViewer(wx.Frame):
         mode_boundaries = np.arange(0, n_images, n_z_steps)
         vlines = list(mode_boundaries[1:] - 0.5)
         xticks = mode_boundaries + (n_z_steps - 1) / 2 
-        xticklabels = ['z-{}'.format(z) for z in nollZernike[0:n_modes] ]
+        xticklabels = ['z-{}'.format(z) for z in nollZernike] * iterations
+        xticklabels = xticklabels[0:len(xticks)]
 
         # Set up x,y data
         x = np.arange(0,n_images)

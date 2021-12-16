@@ -466,7 +466,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             'correction_stack': self.correction_stack,
             'metric_stack': self.metric_stack,
             'nollZernike': self.nollZernike,
-            'z_steps': self.z_steps
+            'z_steps': self.z_steps,
+            'iterations': self.num_it 
         }
 
         # Publish data
