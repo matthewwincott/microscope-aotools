@@ -1,6 +1,5 @@
 
 from cockpit import events
-from cockpit.gui.guiUtils import FLOATVALIDATOR
 
 import wx
 import wx.lib.newevent
@@ -9,6 +8,7 @@ import wx.lib.scrolledpanel
 import numpy as np
 
 from microAO.events import *
+from microAO.gui.common import FloatCtrl
 
 
 _DEFAULT_ZERNIKE_MODE_NAMES = {
@@ -30,19 +30,6 @@ _DEFAULT_ZERNIKE_MODE_NAMES = {
 }
 
 ModeChangeEvent, EVT_MODE_CHANGED = wx.lib.newevent.NewEvent()
-
-class _FloatCtrl(wx.TextCtrl):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    @property
-    def value(self):
-        try:
-            val = float(self.GetValue())
-        except Exception as e:
-            val = None
-
-        return val
 
 class _Mode(wx.Panel):
     """Manual mode selection GUI."""
@@ -77,8 +64,8 @@ class _Mode(wx.Panel):
         self._slider.Bind(wx.EVT_SCROLL, self.OnSlider)
 
         # Adjust mode adjustment range. Influences range of slider.
-        self._slider_min = _FloatCtrl(self, wx.ID_ANY, "{}".format(-default_range), validator=FLOATVALIDATOR, size=wx.Size(50,-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
-        self._slider_max = _FloatCtrl(self, wx.ID_ANY, "{}".format(default_range), validator=FLOATVALIDATOR, size=wx.Size(50,-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
+        self._slider_min = FloatCtrl(self, wx.ID_ANY, value="{}".format(-default_range), size=wx.Size(50,-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
+        self._slider_max = FloatCtrl(self, wx.ID_ANY, value="{}".format(default_range), size=wx.Size(50,-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
         
         self._slider_min.Bind(wx.EVT_TEXT, self.UpdateValueRanges)
         self._slider_max.Bind(wx.EVT_TEXT, self.UpdateValueRanges)
