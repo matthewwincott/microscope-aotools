@@ -245,6 +245,9 @@ class DMViewer(wx.Frame):
         # Force necessary updates
         self.OnScale(None)
 
+        # Bind close event
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
+
     def SetActuators(self, actuator_values):
         self.actuator_values = actuator_values
 
@@ -283,3 +286,10 @@ class DMViewer(wx.Frame):
         
         self._dm_view.SetScale(scale)
         self._dm_colourbar.SetScale(scale)
+    
+    def OnClose(self, e):
+        # Unsubscribe from events
+        events.unsubscribe(PUBSUB_SET_ACTUATORS, self.HandleActuators)
+        
+        # Continue + destroy frame
+        e.Skip()
