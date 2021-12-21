@@ -1044,7 +1044,7 @@ class AdaptiveOpticsDevice(Device):
         return best_flat_actuators, best_z_amps_corrected
 
     @Pyro4.expose
-    def set_phase(self, applied_z_modes, offset=None):
+    def get_actuator_pos_from_modes(self, applied_z_modes, offset=None):
         try:
             actuator_pos = aoAlg.ac_pos_from_zernike(
                 applied_z_modes, self.numActuators
@@ -1057,6 +1057,12 @@ class AdaptiveOpticsDevice(Device):
             actuator_pos += 0.5
         else:
             actuator_pos += offset
+
+        return actuator_pos
+
+    @Pyro4.expose
+    def set_phase(self, applied_z_modes, offset=None):
+        actuator_pos = self.get_actuator_pos_from_modes(applied_z_modes, offset)
         self.send(actuator_pos)
         return actuator_pos
 
