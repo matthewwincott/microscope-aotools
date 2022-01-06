@@ -926,7 +926,7 @@ class AdaptiveOpticsDevice(Device):
         self.check_unwrap_conditions()
 
         # Check dimensions match
-        numActuators, nzernike = np.shape(self.controlMatrix)
+        numActuators, nzernike = np.shape(self.get_controlMatrix())
         try:
             assert numActuators == self.numActuators
         except:
@@ -1073,7 +1073,7 @@ class AdaptiveOpticsDevice(Device):
         self.check_unwrap_conditions()
 
         if modes_tba is None:
-            modes_tba = self.controlMatrix.shape[1]
+            modes_tba = self.get_controlMatrix().shape[1]
         assay = np.zeros((modes_tba, modes_tba))
         applied_z_modes = np.zeros(modes_tba)
         for ii in range(modes_tba):
@@ -1103,7 +1103,7 @@ class AdaptiveOpticsDevice(Device):
         self.check_unwrap_conditions()
 
         # Check dimensions match
-        numActuators, nzernike = np.shape(self.controlMatrix)
+        numActuators, nzernike = np.shape(self.get_controlMatrix())
         try:
             assert numActuators == self.numActuators
         except:
@@ -1173,7 +1173,8 @@ class AdaptiveOpticsDevice(Device):
         pixel_size,
         offset=None,
     ):
-        z_amps = np.zeros(self.numActuators)
+        numActuators, nzernike = np.shape(self.get_controlMatrix())
+        z_amps = np.zeros(numActuators)
         amp_to_correct, metrics = aoAlg.find_zernike_amp_sensorless(
             image_stack,
             zernike_applied,
