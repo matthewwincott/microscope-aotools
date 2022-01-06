@@ -364,7 +364,7 @@ class AdaptiveOpticsDevice(Device):
         _logger.debug("Sending values: {}".format(values))
 
         ttype, tmode = self.get_trigger()
-        if ttype is not "SOFTWARE":
+        if ttype != "SOFTWARE":
             self.set_trigger(cp_ttype="SOFTWARE", cp_tmode="ONCE")
 
         # Need to normalise patterns because general DM class expects 0-1 values
