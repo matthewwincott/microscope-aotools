@@ -32,7 +32,7 @@ import scipy
 from microAO.events import *
 from microAO.gui.common import EVT_VALUE, FloatCtrl, FilterModesCtrl, MinMaxSliderCtrl
 
-RF_DATATYPES = ["Zernike", "actuator"]
+RF_DATATYPES = ["zernike", "actuator"]
 
 class RFDatatypeChoice(wx.Choice):
     def __init__(self, *args, **kwargs):
@@ -96,7 +96,7 @@ class RFAddDatapointFromFile(wx.Dialog):
 
         self.data = {
             'z': zpos,
-            'datatype': datatype,
+            'datatype': datatype.lower(),
             'values': values
         }
 
@@ -157,11 +157,11 @@ class RFAddDatapointFromCurrent(wx.Dialog):
 
     def OnConfirm(self, e):
         zpos = self.zpos.value
-        datatype = self.datatype.GetString(self.datatype.GetSelection())        
+        datatype = self.datatype.GetString(self.datatype.GetSelection()).lower()        
 
-        if datatype.lower() == "zernike":
+        if datatype == "zernike":
             values = self._device.proxy.get_last_modes()
-        elif datatype.lower() == "actuator":
+        elif datatype == "actuator":
             values = self._device.proxy.get_last_actuator_values()
         else:
             values = None

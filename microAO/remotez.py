@@ -14,7 +14,7 @@ from microAO.gui.remoteFocus import RF_DATATYPES
 from microAO.gui.sensorlessViewer import SensorlessResultsViewer
 from microAO.events import *
 
-RF_DATATYPES = ["Zernike", "actuator"]
+RF_DATATYPES = ["zernike", "actuator"]
 
 class RemoteZ():
     def __init__(self, device):
@@ -135,7 +135,6 @@ class RemoteZ():
             )
 
             im = self._device.captureImage(camera)
-            print(im)
 
 
     def add_datapoint(self, datapoint):
@@ -190,12 +189,12 @@ class RemoteZ():
     def set_z(self, z, datatype="zernike"):
         try:
             if datatype == "zernike":
-                values = [self.z_lookup[datatype][i](z) for i in range(0,self._n_modes)]
-                self._device.send(values)
-                # self._device.set_phase(values, offset=self._device.proxy.get_system_flat())
-            elif datatype == "actuator":
-                values = [self.z_lookup[datatype][i](z) for i in range(0,self._n_actuators)]
+                values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_modes)])
                 # self._device.send(values)
+                self._device.set_phase(values, offset=self._device.proxy.get_system_flat())
+            elif datatype == "actuator":
+                values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_actuators)])
+                self._device.send(values)
         except IndexError:
             # No lookup data
             pass
@@ -221,7 +220,6 @@ class RemoteZ():
 
                 # Keys
                 for key in f.keys():
-                    print(key)
                     if key == 'datatype':
                         datapoint[key] = f[key][()].decode('utf-8')
                     else:
