@@ -1,6 +1,26 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+## Copyright (C) 2021 Matthew Wincott <matthew.wincott@eng.ox.ac.uk>
+##
+## microAO is free software: you can redistribute it and/or modify
+## it under the terms of the GNU General Public License as published by
+## the Free Software Foundation, either version 3 of the License, or
+## (at your option) any later version.
+##
+## microAO is distributed in the hope that it will be useful,
+## but WITHOUT ANY WARRANTY; without even the implied warranty of
+## MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+## GNU General Public License for more details.
+##
+## You should have received a copy of the GNU General Public License
+## along with microAO.  If not, see <http://www.gnu.org/licenses/>.
+
 from cockpit import events
+import cockpit.gui.dialogs
 
 import wx
+from wx.core import DirDialog
 import wx.lib.newevent
 
 from matplotlib.figure import Figure
@@ -173,10 +193,10 @@ class RemoteFocusControl(wx.Frame):
         self._n_modes = control_matrix.shape[1]
         self._n_actuators = control_matrix.shape[0]
 
-        self.datapoints = []
-        self.value = 0        # Subscribe to pubsub events
-        # events.subscribe(PUBSUB_SENSORLESS_RESULTS, self.HandleSensorlessData)
-        # events.oneShotSubscribe        
+        self.z_target = 0        
+        
+        # Subscribe to pubsub events
+      
         root_panel = wx.Panel(self)
 
         # Create tabbed control interface
@@ -191,15 +211,26 @@ class RemoteFocusControl(wx.Frame):
         addFromCurrentBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from current', size=(140, 30))
         addFromFileBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from file', size=(140, 30))
         removeBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Remove selected', size=(140, 30))
+        saveBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save data', size=(140, 30))
+        loadBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Load data', size=(140, 30))
+        calibrateBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate', size=(140, 30))
 
         addFromCurrentBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromCurrent)
         addFromFileBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromFile)
         removeBtn.Bind(wx.EVT_BUTTON, self.OnRemoveDatapoint)
+        saveBtn.Bind(wx.EVT_BUTTON, self.OnSaveDatapoints)
+        loadBtn.Bind(wx.EVT_BUTTON, self.OnLoadDatapoints)
+        calibrateBtn.Bind(wx.EVT_BUTTON, self.OnCalibrate)
         
         data_panel_btns_sizer = wx.BoxSizer(wx.VERTICAL)
         data_panel_btns_sizer.Add(addFromFileBtn)
         data_panel_btns_sizer.Add(addFromCurrentBtn)
         data_panel_btns_sizer.Add(removeBtn)
+        data_panel_btns_sizer.Add(-1, 10)
+        data_panel_btns_sizer.Add(saveBtn)
+        data_panel_btns_sizer.Add(loadBtn)
+        data_panel_btns_sizer.Add(-1, 10)
+        data_panel_btns_sizer.Add(calibrateBtn)
         data_panel_btns.SetSizerAndFit(data_panel_btns_sizer)
 
         # Layout data panel
@@ -221,29 +252,42 @@ class RemoteFocusControl(wx.Frame):
         row_sizer.Add(self.remotez)
         
         # Layout
-        self.datatype = RFDatatypeChoice(control_panel)
-        self.datatype.Bind(wx.EVT_CHOICE, self.OnModesChange)
+        self.datatype_control = RFDatatypeChoice(control_panel)
+        self.datatype_control.Bind(wx.EVT_CHOICE, self.OnDatatypeChange)
 
         control_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        control_panel_sizer.Add(self.datatype)
+        control_panel_sizer.Add(self.datatype_control)
         control_panel_sizer.Add(row_sizer)
 
         control_panel.SetSizerAndFit(control_panel_sizer)
 
+        # Experiment panel
+        experiment_panel = wx.Panel(tabs)
+
+        btn_remotez_stack = wx.Button(experiment_panel, label="Remote z-stack")
+        btn_remotez_stack.Bind(wx.EVT_BUTTON, self.OnRemoteZStack)
+        
+        # Layout
+
+        experiment_panel_sizer = wx.BoxSizer(wx.VERTICAL)
+        experiment_panel_sizer.Add(btn_remotez_stack)
+
+        experiment_panel.SetSizerAndFit(experiment_panel_sizer)
+
         # Visualisation panel
         vis_panel = wx.Panel(root_panel)
 
-        self.modes = FilterModesCtrl(vis_panel, value="5,6,7,8")
-        self.datatype = RFDatatypeChoice(vis_panel)
+        self.modes = FilterModesCtrl(vis_panel, value="1-12")
+        self.datatype_vis = RFDatatypeChoice(vis_panel)
         figure = Figure()
         self.ax = figure.add_subplot(1, 1, 1)
         self.canvas = FigureCanvas(vis_panel, wx.ID_ANY, figure)
 
-        self.datatype.Bind(wx.EVT_CHOICE, self.OnModesChange)
-        self.modes.Bind(wx.EVT_TEXT, self.OnModesChange)
+        self.datatype_vis.Bind(wx.EVT_CHOICE, self.OnDatatypeChange)
+        self.modes.Bind(wx.EVT_TEXT, self.OnDatatypeChange)
 
         vis_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        vis_panel_sizer.Add(self.datatype)
+        vis_panel_sizer.Add(self.datatype_vis)
         vis_panel_sizer.Add(self.modes)
         vis_panel_sizer.Add(self.canvas)
 
@@ -252,6 +296,7 @@ class RemoteFocusControl(wx.Frame):
         # Add pages to tabs
         tabs.AddPage(data_panel,"Data") 
         tabs.AddPage(control_panel,"Control") 
+        tabs.AddPage(experiment_panel,"Experiments") 
 
         tabs.Layout()
 
@@ -269,62 +314,94 @@ class RemoteFocusControl(wx.Frame):
 
 
     def addDatapont(self, datapoint):
-        datapoint[id] = len(self.datapoints) + 1
-        self.datapoints.append(datapoint)
-
-        self.datapoints.sort(key=lambda d: d["z"])
+        self._device.remotez.add_datapoint(datapoint)
         
-        self.listbox.Clear()
-        for d in self.datapoints:
-            self.listbox.AppendItems("{} ({})".format(d["z"],d["datatype"]))
-
+        self.updateDatapointList()
         self.update()
 
-    def OnRemoteZ(self, e):
-        z_target = self.remotez.GetValue()
-
-        if self.datatype.GetStringSelection().lower() == "zernike":
-            values = [self.z_lookup[i](z_target) for i in range(0,self._n_modes)]
-            self._device.set_phase(values, offset=self._device.proxy.get_system_flat())
-        elif self.datatype.GetStringSelection().lower() == "actuator":
-            values = [self.z_lookup[i](z_target) for i in range(0,self._n_actuators)]
-            self._device.send(values)
-
-    def UpdateValueRanges(self, middle=None, range=None):
-        min_val =  self._slider_min.value
-        if min_val is not None:
-            self._val.SetMin(min_val)
-
-        max_val = self._slider_max.value
-        if max_val is not None:
-            self._val.SetMax(max_val)
-
-        self.SetZValue(self.value, quiet=True)
-
-    def GetZValue(self):
-        return self._val.GetValue()
-
-    def SetZValue(self, val, quiet=False):
-        """ Set control value 
-
-            Sets control value. Emits mode change event by default, a quiet flag can be 
-            used to override this behaviour.        
-        """
-        # Set value property
-        self.value = val
-
-        # Set value control
-        self._val.SetValue(val)
+    def removeDatapoint(self, datapoint):
+        self._device.remotez.remove_datapoint(datapoint)
         
-        # Set slider control value
-        slider_val = 200 * (val - self._slider_min.value)/(self._slider_max.value - self._slider_min.value) - 100 
-        self.self.remotez.SetValue(slider_val)
+        self.updateDatapointList()
+        self.update()
 
-        # Emit mode change event, if required
-        if not quiet:
+    def updateDatapointList(self):
+        self.listbox.Clear()
+        for d in self._device.remotez.datapoints:
+            self.listbox.AppendItems("{} ({})".format(d["z"],d["datatype"]))
+
+    def OnRemoteZ(self, e):
+        self.z_target = self.remotez.GetValue()
+
+        mode = self.datatype_control.GetStringSelection().lower()
+        self._device.remotez.set_z(self.z_target, mode)
+
+        self.update_zpos()
+
+    def OnRemoteZStack(self, e):
+        # -5 to 5 for stage: customised, 0.13 um, maybe 1 um
+        # 2 point calibration: 5 radians
+
+        
+        inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
+            self,
+            "Get remote Z stack parameters",
+            [
+                "z min",
+                "z max",
+                "z step size",
+            ],
+            (
+                0,
+                0,
+                1,
+
+            ),
+        )
+
+        zmin = float(inputs[0])
+        zmax = float(inputs[1])
+        zstepssize = int(inputs[2])
+
+        # Select output folder
+        dlg = DirDialog(None, "Select data output directory")
+
+        if dlg.ShowModal() == wx.ID_OK:
+            output_dir = dlg.GetPath()
+            print(output_dir)
+        else:
             pass
-            # evt = ModeChangeEvent(mode=self.id, value= self.value)
-            # wx.PostEvent(self, evt)
+
+        self._device.remotez.remotez_stack(zmin, zmax, zstepssize)
+
+
+    def OnCalibrate(self, e):
+        # Get parameters
+        inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
+            self,
+            "Get remote Z stack parameters",
+            [
+                "z min",
+                "z max",
+                "z step",
+            ],
+            (
+                0,
+                5,
+                2,
+
+            ),
+        )
+
+        zmin = float(inputs[0])
+        zmax = float(inputs[1])
+        zsteps = int(inputs[2])
+
+        zpos = np.linspace(zmin, zmax, zsteps)
+
+        zstage = self._device.getStage()
+
+        self._device.remotez.calibrate(zstage, zpos)
 
     def OnAddDatapointFromFile(self, e):
         dlg = RFAddDatapointFromFile(self)
@@ -336,6 +413,8 @@ class RemoteFocusControl(wx.Frame):
             pass
         
         dlg.Destroy()
+    
+        self.update()
 
     def OnAddDatapointFromCurrent(self, e):
         dlg = RFAddDatapointFromCurrent(self, self._device)
@@ -348,14 +427,56 @@ class RemoteFocusControl(wx.Frame):
 
         dlg.Destroy()
 
+        self.update()
+
     def OnRemoveDatapoint(self, e):
+        # Get selected datapoints and remove
         selected = self.listbox.GetSelections()
 
         for i in selected:
-            self.datapoints.pop(i)
-            self.listbox.Delete(i)
+            datapoint = self._device.remotez.datapoints[i]
+            self.removeDatapoint(datapoint)
+        
+        # Update GUI
+        self.update()
 
-    def OnModesChange(self, e):
+    def OnSaveDatapoints(self, e):
+        # Select output folder
+        dlg = wx.DirDialog(self, "Select data output directory")
+
+        if dlg.ShowModal() == wx.ID_OK:
+            output_dir = dlg.GetPath()
+        else:
+            return None
+        
+        # Save datapoints
+        self._device.remotez.save_datapoints(output_dir)
+
+    def OnLoadDatapoints(self, e):
+        # Select input directory
+        dlg = wx.DirDialog(None, "Select data output directory")
+        
+        if dlg.ShowModal() == wx.ID_OK:
+            input_dir = dlg.GetPath()
+        else:
+            return None
+
+        # Load datapoints
+        self._device.remotez.load_datapoints(input_dir)
+
+        # Update gui
+        self.updateDatapointList()
+        self.update()
+
+    def OnDatatypeChange(self, e):
+        for control in [self.datatype_vis, self.datatype_control]:
+            evt_emitter = e.GetEventObject()
+
+            # Change other datatype controls
+            if control is not evt_emitter:
+                control.SetStringSelection(evt_emitter.GetStringSelection())
+        
+        # Update GUI
         self.update()
 
     def update(self):
@@ -363,49 +484,38 @@ class RemoteFocusControl(wx.Frame):
         self.ax.clear()
 
         # Get data
-        current_datatype = self.datatype.GetStringSelection().lower()
-        points = [a for a in self.datapoints if a["datatype"].lower() == current_datatype]
+        current_datatype = self.datatype_vis.GetStringSelection().lower()
+        points = [a for a in self._device.remotez.datapoints if a["datatype"].lower() == current_datatype]
         z = np.array([point["z"] for point in points])
         values = np.array([point["values"] for point in points])
+        z_lookup = self._device.remotez.z_lookup[current_datatype]
         
-        # Calculate regression
         try:
             n_measurements = values.shape[0]
-            n_values = values.shape[1]
         except IndexError:
             n_measurements = 0
-            n_values = 0
-        slopes = np.zeros(n_values)
-        intercepts = np.zeros(n_values)
-
-        self.z_lookup = []
 
         # Continue of more than one value
         if n_measurements > 1:
-            for i in range(n_values):
-                slope, intercept, r, p, se = scipy.stats.linregress(z, values[:,i])
-                slopes[i] = slope
-                intercepts[i] = intercept
-                coef = [slope, intercept]
-                # coef = np.polyfit(z,values[:,i],1)
-
-                self.z_lookup.append(np.poly1d(coef)) 
-
             # Plot modes and regression
             # - filter visible modes
-            filter_modes = self.modes.GetValue()
+            filter_modes = [mode-1 for mode in self.modes.GetValue() if (mode-1) < len(z_lookup)]
             
             for mode in filter_modes:
                 self.ax.scatter(z, values[:,mode])
                 
                 x1=np.linspace(np.min(z),np.max(z),500)
-                y1=slopes[mode]*x1+intercepts[mode]
-                # self.ax.plot(x1,y1)
-                self.ax.plot(z, self.z_lookup[mode](z))
+                self.ax.plot(z, z_lookup[mode](z))
+
+            # Plot current z_target
+            self.ax_z_target = self.ax.axvline(self.z_target)
 
         self.canvas.draw()
 
-    def set_data(self, data):
-        self.datapoints = data
-        self.update()
-    
+    def update_zpos(self):
+        try:
+            self.ax_z_target.set_xdata([self.z_target, self.z_target])
+            self.canvas.draw()
+        except AttributeError:
+            # No vline yet, skip
+            pass
