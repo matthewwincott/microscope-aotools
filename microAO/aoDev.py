@@ -418,7 +418,7 @@ class AdaptiveOpticsDevice(Device):
         _logger.info("Queuing patterns on DM")
 
         ttype, tmode = self.get_trigger()
-        if ttype is not "RISING_EDGE":
+        if ttype != "RISING_EDGE":
             self.set_trigger(cp_ttype="RISING_EDGE", cp_tmode="ONCE")
 
         # Need to normalise patterns because general DM class expects 0-1 values
