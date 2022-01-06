@@ -810,6 +810,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def OnSetSystemFlatCalculationParameters(self, event: wx.CommandEvent) -> None:
         del event
 
+        params = self._device.sys_flat_parameters
+
         inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
             self,
             "Set system flat parameters",
@@ -819,20 +821,20 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                 "System Flat Noll indeces",
             ],
             (
-                self._device.sys_flat_num_it,
-                self._device.sys_error_thresh,
-                self._device.sysFlatNollZernike.tolist(),
+                params["num_it"],
+                params["error_thresh"],
+                params["nollZernike"].tolist(),
             ),
         )
-        self._device.sys_flat_num_it = int(inputs[0])
-        self._device.sys_error_thresh = np.float(inputs[1])
+        params["num_it"]= int(inputs[0])
+        params["error_thresh"] = np.float(inputs[1])
 
         # FIXME: we should probably do some input checking here and
         # maybe not include a space in `split(", ")`
         if inputs[2] == "":
-            self._device.sysFlatNollZernike = None
+            params["nollZernike"] = None
         else:
-            self._device.sysFlatNollZernike = np.asarray(
+            params = np.asarray(
                 [int(z_ind) for z_ind in inputs[-1][1:-1].split(", ")]
             )
 
@@ -859,6 +861,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
     def OnSetSensorlessParameters(self, event: wx.CommandEvent) -> None:
 
+        params = self._device.sensorless_params
+
         inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
             self,
             "Set sensorless AO parameters",
@@ -871,25 +875,25 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                 "Start from flat"
             ],
             (
-                self._device.z_min,
-                self._device.z_max,
-                self._device.numMes,
-                self._device.num_it,
-                self._device.nollZernike.tolist(),
-                self._device.start_from_flat
+                params["z_min"],
+                params["z_max"],
+                params["numMes"],
+                params["num_it"],
+                params["nollZernike"].tolist(),
+                params["start_from_flat"]
             ),
         )
-        self._device.z_min = float(inputs[0])
-        self._device.z_max = float(inputs[1])
-        self._device.numMes = int(inputs[2])
-        self._device.num_it = int(inputs[3])
-        self._device.nollZernike = np.asarray(
+        params["z_min"] = float(inputs[0])
+        params["z_max"] = float(inputs[1])
+        params["numMes"] = int(inputs[2])
+        params["num_it"] = int(inputs[3])
+        params["nollZernike"] = np.asarray(
             [int(z_ind) for z_ind in inputs[4][1:-1].split(", ")]
         )
         if inputs[5].lower() in ["true", "t", "yes", "y", "1"]:
-            self._device.start_from_flat = True
+            params["start_from_flat"] = True
         elif inputs[5].lower() in ["false", "f", "no", "n", "0"]:
-            self._device.start_from_flat = False
+            params["start_from_flat"] = False
 
     def OnDMViewer(self, event: wx.CommandEvent) -> None:
         # Try to find DM viewer window
