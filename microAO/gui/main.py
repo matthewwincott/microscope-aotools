@@ -697,13 +697,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             new_actuator_values = curr_actuator_values - curr_flat + new_flat
 
             # Set new flat and update actuator values
-            self._device.proxy.set_system_flat(new_flat)
+            self._device.set_system_flat(new_flat)
             self._device.send(new_actuator_values)
-
-            # Set flat in cockpit config
-            userConfig.setValue(
-                "dm_controlMatrix", np.ndarray.tolist(new_flat)
-            )
 
             # Log
             logger.log.info("System flat loaded from file")
