@@ -1052,7 +1052,7 @@ class AdaptiveOpticsDevice(Device):
         except Exception as err:
             _logger.info(err)
             raise err
-        self.last_zernike_modes = applied_z_modes
+
         if np.any(offset) is None:
             actuator_pos += 0.5
         else:
