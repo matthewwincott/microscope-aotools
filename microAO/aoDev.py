@@ -1062,6 +1062,7 @@ class AdaptiveOpticsDevice(Device):
 
     @Pyro4.expose
     def set_phase(self, applied_z_modes, offset=None):
+        self.last_zernike_modes = applied_z_modes
         actuator_pos = self.get_actuator_pos_from_modes(applied_z_modes, offset)
         self.send(actuator_pos)
         return actuator_pos
