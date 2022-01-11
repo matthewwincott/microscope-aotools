@@ -306,14 +306,12 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         return checked_items
 
     def SetCorrections(self, corrections):
-        # Clear old list
-        for i in range(self.corrections.Count):
-            self.corrections.Delete(i)
-
-        # Update list        
-        for i, correction in enumerate(corrections.items()):
-            i = self.corrections.Insert(correction[0], i)
-            self.corrections.SetChecked([i])
+        # Update corrections list
+        for i,item in enumerate(self.corrections.GetItems()):
+            if item in corrections:
+                self.corrections.Check(i, True)
+            else:
+                self.corrections.Check(i, False)
 
     def Reset(self, quiet=False):
         for mode_control in self._mode_controls:
@@ -324,9 +322,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
             self.SetModes(modes)
 
     def HandleApplyCorrections(self, corrections):
-        print([key for key, value in corrections.items()])
-        # self.SetCorrections(corrections)
-        pass
+        self.SetCorrections(corrections)
 
 
 class ModesControl(wx.Frame):

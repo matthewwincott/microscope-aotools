@@ -139,6 +139,8 @@ class AdaptiveOpticsDevice(Device):
             self.set_system_flat(system_flat)
         else:
             self.set_system_flat(np.zeros(self.numActuators) + 0.5)
+        # Last set corrections
+        self.last_corrections = None
         # Last applied zenrike  modes
         self.last_zernike_modes = None
         # Last applied actuators values
@@ -424,6 +426,10 @@ class AdaptiveOpticsDevice(Device):
     @Pyro4.expose
     def get_last_modes(self):
         return self.last_zernike_modes
+
+    @Pyro4.expose
+    def get_last_corrections(self):
+        return self.last_corrections
 
     @Pyro4.expose
     def queue_patterns(self, patterns):
@@ -1102,9 +1108,6 @@ class AdaptiveOpticsDevice(Device):
 
     @Pyro4.expose
     def apply_corrections(self, corrections=[]):
-        # Add 'default' correction to list of corrections to be applied
-        corrections = list(set(['default'] + corrections))
-
         # Filter required corrections
         corrections_filtered = {key:val for key, val in self.corrections.items() if key in corrections}
 
@@ -1123,17 +1126,33 @@ class AdaptiveOpticsDevice(Device):
         actuator_pos = self.get_actuator_pos_from_modes(total_corrections_phase, total_corrections_offset)
         self.send(actuator_pos)
 
+        # Store last corrections
+        self.last_corrections = corrections_filtered.copy()
+
         return actuator_pos, corrections_filtered
+
+    @Pyro4.expose
+    def refresh_corrections(self, corrections=None):
+        """ Refresh corrections. Ensure named corrections are applied if specified.
+        """
+        corrections_list = [key for key, value in self.last_corrections.items()]
+
+        if corrections is not None:
+            corrections_list = list(set(corrections_list + corrections))
+
+        actuator_pos, corrections_applied = self.apply_corrections(corrections_list)
+
+        return actuator_pos, corrections_applied
 
     @Pyro4.expose
     def set_phase(self, applied_z_modes, offset=None, corrections=[]):
         # Set applied modes and offset as default correction
         self.set_correction('default', modes=applied_z_modes)
+        corrections = list(set(corrections + ['default']))
 
         if offset is not None:
             self.set_correction('offset', actuator_values=offset)
-            list(set(corrections + ['offset']))
-
+            corrections = list(set(corrections + ['offset']))
         # Apply corrections
         actuator_pos, _ = self.apply_corrections(corrections)
 

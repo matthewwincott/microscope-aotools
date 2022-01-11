@@ -552,6 +552,13 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
         events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
 
+    def refresh_corrections(self, corrections=None):
+        actuator_pos, corrections_applied = self.proxy.refresh_corrections(corrections=corrections)
+
+        # Publish events
+        events.publish(PUBSUB_SET_ACTUATORS, actuator_pos)
+        events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
+
     def send(self, actuator_values):
         # Send values to device
         self.proxy.send(actuator_values)
@@ -569,6 +576,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Publish actuator change
         events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
 
-        # Get corrections applied and publish
-        corrections_applied  = self.proxy.get_corrections(filter=corrections)
+        # Get last corrections and publish
+        corrections_applied  = self.proxy.get_last_corrections()
         events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
