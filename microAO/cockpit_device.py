@@ -155,9 +155,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Shared state for the new image callbacks during sensorless
         self.sensorless_data = {}
 
-
         # Excercise the DM to remove residual static and then set to 0 position
-        if self.config.get('exercise_on_startup', 'true').lower() == 'true':
+        if self.config.get('exercise_on_startup', 'false').lower() in ['true', 't', 'yes', 'y', 1]:
             for _ in range(50):
                 self.send(np.random.rand(self.no_actuators))
                 time.sleep(0.01)
