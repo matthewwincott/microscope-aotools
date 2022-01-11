@@ -178,6 +178,11 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         root_panel = wx.Panel(self)
         root_sizer = wx.BoxSizer(wx.VERTICAL)
 
+        # Reset button
+        reset_btn = wx.Button(root_panel, label="reset")
+        reset_btn.Bind(wx.EVT_BUTTON, self.OnReset)
+        root_sizer.Add(reset_btn)
+
         # Corrections list
         corrections_lbl = wx.StaticText(root_panel, label="Corrections")
         self.corrections = wx.CheckListBox(root_panel, id=wx.ID_ANY, choices=DEFAULT_CORRECTIONS)
@@ -267,6 +272,9 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
     def OnMode(self, evt):
         self.RefreshModes()
 
+    def OnReset(self, evt):
+        self.Reset()
+
     def OnCorrectionCheck(self, evt):
         self.RefreshModes()
 
@@ -309,7 +317,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
 
     def Reset(self, quiet=False):
         for mode_control in self._mode_controls:
-            mode_control.SetValue(0, quit=quiet)
+            mode_control.SetValue(0, quiet=quiet)
 
     def HandleSetPhase(self, modes):
         if modes is not None:
