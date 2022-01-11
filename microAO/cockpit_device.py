@@ -44,7 +44,6 @@ import h5py
 
 from microAO.events import *
 from microAO.gui.main import MicroscopeAOCompositeDevicePanel
-from microAO.remotez import RemoteZ
 
 def _get_timestamped_log_path(prefix):
     dirname = wx.GetApp().Config["log"].getpath("dir")
@@ -183,9 +182,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             self.set_system_flat(sys_flat)
         except Exception:
             pass
-
-        # Initialise additional components
-        self.remotez = RemoteZ(self)
 
     def makeUI(self, parent):
         return MicroscopeAOCompositeDevicePanel(parent, self)

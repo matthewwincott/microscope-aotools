@@ -1,4 +1,5 @@
 from microAO.aoDev import AdaptiveOpticsDevice
+from microAO.remotez import RemoteZ
 from microAO.gui import *
 
 import cockpit.gui.device
@@ -915,6 +916,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         # If not found, create new window and save reference to its id
         if window is None:
+            self._device.remotez = RemoteZ(self._device)
             window = RemoteFocusControl(self, self._device)    
             self._components["remote_focus"] = window.GetId()
 
