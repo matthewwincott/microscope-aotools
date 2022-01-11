@@ -515,7 +515,12 @@ class AdaptiveOpticsDevice(Device):
         self.send(np.zeros(self.numActuators) + 0.5)
         self.last_actuator_values = last_ac
 
-
+    @Pyro4.expose
+    def to_flat(self):
+        _logger.info("Setting DM to flat")
+        last_ac = np.copy(self.last_actuator_values)
+        self.send(self.get_system_flat())
+        self.last_actuator_values = last_ac
 
     @Pyro4.expose
     def make_mask(self, radius):
