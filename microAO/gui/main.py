@@ -902,8 +902,12 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         # If not found, create new window and save reference to its id
         if window is None:
-            window = DMViewer(self, self._device)    
+            window = DMViewer(self, self._device)
             self._components["dm_view"] = window.GetId()
+
+            actuator_values = self._device.proxy.get_last_actuator_values()
+            if actuator_values is not None:
+                window.SetActuators(actuator_values)
 
         # Show window and bring to front
         window.Show()
