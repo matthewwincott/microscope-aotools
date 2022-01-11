@@ -178,6 +178,12 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         except Exception:
             pass
 
+        try:
+            sys_flat = np.asarray(userConfig.getValue("dm_sys_flat"))
+            self.set_system_flat(sys_flat)
+        except Exception:
+            pass
+
         # Initialise additional components
         self.remotez = RemoteZ(self)
 
