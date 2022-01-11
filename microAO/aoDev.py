@@ -515,8 +515,7 @@ class AdaptiveOpticsDevice(Device):
         self.send(np.zeros(self.numActuators) + 0.5)
         self.last_actuator_values = last_ac
 
-        if self.last_zernike_modes is not None:
-            self.last_zernike_modes = np.zeros(len(self.last_zernike_modes))
+
 
     @Pyro4.expose
     def make_mask(self, radius):
