@@ -377,6 +377,7 @@ class AdaptiveOpticsDevice(Device):
         ttype, tmode = self.get_trigger()
         if ttype != "SOFTWARE":
             self.set_trigger(cp_ttype="SOFTWARE", cp_tmode="ONCE")
+            ttype, tmode = self.get_trigger()
 
         # Need to normalise patterns because general DM class expects 0-1 values
         values[values > 1.0] = 1.0
