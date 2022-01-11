@@ -190,11 +190,13 @@ class RemoteZ():
         try:
             if datatype == "zernike":
                 values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_modes)])
-                # self._device.send(values)
-                self._device.set_phase(values, offset=self._device.proxy.get_system_flat())
+                self._device.set_correction("remotez", modes=values)
             elif datatype == "actuator":
                 values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_actuators)])
-                self._device.send(values)
+                self._device.set_correction("remotez", actuator_values=values)
+            
+            self._device.apply_corrections(corrections=["system_flat", "remotez", "sensorless"])
+
         except IndexError:
             # No lookup data
             pass

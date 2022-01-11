@@ -164,6 +164,7 @@ class _Mode(wx.Panel):
     def value(self, val):
         self._value = val
 
+DEFAULT_CORRECTIONS = ["system_flat", "remotez", "sensorless"]
 class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
     def __init__(self, parent, device):
         wx.lib.scrolledpanel.ScrolledPanel.__init__(self, parent, -1)
@@ -176,6 +177,16 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         # Create root panel and sizer
         root_panel = wx.Panel(self)
         root_sizer = wx.BoxSizer(wx.VERTICAL)
+
+        # Corrections list
+        corrections_lbl = wx.StaticText(root_panel, label="Corrections")
+        self.corrections = wx.CheckListBox(root_panel, id=wx.ID_ANY, choices=DEFAULT_CORRECTIONS)
+        self.corrections.SetCheckedItems(list(range(self.corrections.Count)))
+        self.corrections.Bind(wx.EVT_CHECKLISTBOX, self.OnCorrectionCheck)
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+        hbox.Add(corrections_lbl, wx.SizerFlags().Centre().Border(wx.RIGHT, 8))
+        hbox.Add(self.corrections, wx.SizerFlags().Centre())
+        root_sizer.Add(hbox)
 
         # Filter modes control
         filter_modes_lbl = wx.StaticText(root_panel, label="Mode filter")
@@ -227,6 +238,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         # Show only filtered modes
         self.FilterModes()
 
+        # Set root sizer
         root_panel.SetSizer(root_sizer)
         
         # Set frame sizer
@@ -236,6 +248,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
 
         # Subscribe to pubsub events
         events.subscribe(PUBSUB_SET_PHASE, self.HandleSetPhase)
+        events.subscribe(PUBSUB_APPLY_CORRECTIONS, self.HandleApplyCorrections)
 
     def FilterModes(self):
         # Show only filtered modes
@@ -252,12 +265,10 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         self.FilterModes()
 
     def OnMode(self, evt):
-        # self._modes[evt.mode] = evt.value
-        modes = self.GetModes()
-        self._device.set_phase(
-            modes, 
-            offset=self._device.proxy.get_system_flat()
-        )
+        self.RefreshModes()
+
+    def OnCorrectionCheck(self, evt):
+        self.RefreshModes()
 
     def GetModes(self):
         modes = []
@@ -266,7 +277,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         
         return modes
 
-    def UpdateModes(self, modes):
+    def SetModes(self, modes):
         # Update each mode
         for i, value in enumerate(modes):
             mode_control = self._mode_controls[i]
@@ -274,13 +285,41 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
                 mode_control.SetValue(value, quiet=True)
                 mode_control.UpdateValueRanges()
     
+    def RefreshModes(self):
+        modes = self.GetModes()
+        corrections = self.GetCorrections()
+        self._device.set_phase(
+            modes, 
+            corrections=corrections
+        )
+
+    def GetCorrections(self):
+        checked_items = list(self.corrections.GetCheckedStrings())
+        return checked_items
+
+    def SetCorrections(self, corrections):
+        # Clear old list
+        for i in range(self.corrections.Count):
+            self.corrections.Delete(i)
+
+        # Update list        
+        for i, correction in enumerate(corrections.items()):
+            i = self.corrections.Insert(correction[0], i)
+            self.corrections.SetChecked([i])
+
     def Reset(self, quiet=False):
         for mode_control in self._mode_controls:
             mode_control.SetValue(0, quit=quiet)
 
-    def HandleSetPhase(self, modes, actuator_values):
+    def HandleSetPhase(self, modes):
         if modes is not None:
-            self.UpdateModes(modes)
+            self.SetModes(modes)
+
+    def HandleApplyCorrections(self, corrections):
+        print([key for key, value in corrections.items()])
+        # self.SetCorrections(corrections)
+        pass
+
 
 class ModesControl(wx.Frame):
     def __init__(self, parent, device):

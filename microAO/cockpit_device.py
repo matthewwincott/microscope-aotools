@@ -283,15 +283,15 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             z_modes_ignore=z_ignore,
         )
 
-        userConfig.setValue("dm_sys_flat", np.ndarray.tolist(sys_flat_values))
-        self.proxy.set_system_flat(sys_flat_values)
+        self.set_system_flat(sys_flat_values)
+
         return sys_flat_values, best_z_amps_corrected
 
     def reset(self):
         self.proxy.reset()
 
     def applySysFlat(self):
-        sys_flat_values = np.asarray(userConfig.getValue("dm_sys_flat"))
+        sys_flat_values = self.get_system_flat()
         self.send(sys_flat_values)
 
     def applyLastPattern(self):
@@ -326,7 +326,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         }
 
         if self.sensorless_params.get("start_from_flat", False):
-            self.sensorless_data["actuator_offset"] = userConfig.getValue("dm_sys_flat")
+            self.sensorless_data["actuator_offset"] = self.get_system_flat()
         else:
             self.sensorless_data["actuator_offset"] = self.proxy.get_last_actuator_values()
 
@@ -345,7 +345,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 it_zernike_applied[
                     ind * self.sensorless_params["numMes"] : (ind + 1) * self.sensorless_params["numMes"], noll_ind - 1
                 ] = self.sensorless_data["z_steps"]
-            print(it_zernike_applied)
             self.sensorless_data["zernike_applied"] = np.concatenate(
                 [self.sensorless_data["zernike_applied"], it_zernike_applied]
             )
@@ -471,7 +470,13 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             logger.log.debug(
                 "Actuator positions applied: %s", self.sensorless_data["actuator_offset"]
             )
+
+            # Set final correction
             self.send(self.sensorless_data["actuator_offset"])
+
+            # Record AO correction
+            ao_correction = self.sensorless_data["sensorless_correct_coef"] * -1.0
+            self.set_correction("sensorless", modes=ao_correction)
 
         # Update/create metric plot
         sensorless_data = {
@@ -512,6 +517,40 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         return camera
 
+    def get_system_flat(self):
+        sys_flat = np.asarray(userConfig.getValue("dm_sys_flat"))
+
+        # Check system flat is defined
+        if not np.any(sys_flat):
+            sys_flat = None
+
+        logger.log.warn("System flat is not defined")
+
+        return sys_flat
+    
+    def set_system_flat(self, values):
+        # Set in cockpit user config
+        userConfig.setValue("dm_sys_flat", np.ndarray.tolist(values))
+
+        # Set in device
+        self.proxy.set_system_flat(values)
+
+    def add_correction(self, name, modes=None, actuator_values=None):
+        self.proxy.add_correction(name, modes=modes, actuator_values=actuator_values)
+
+    def remove_correction(self, name):
+        self.proxy.remove_correction(name)
+
+    def set_correction(self, name, modes=None, actuator_values=None):
+        self.proxy.set_correction(name, modes=modes, actuator_values=actuator_values)
+
+    def apply_corrections(self, corrections):
+        actuator_values, corrections_applied = self.proxy.apply_corrections(corrections)
+
+        # Publish events
+        events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
+        events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
+
     def send(self, actuator_values):
         # Send values to device
         self.proxy.send(actuator_values)
@@ -519,16 +558,16 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Publish events
         events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
 
-    def set_phase(self, applied_z_modes, offset=None):
+    def set_phase(self, applied_z_modes, offset=None, corrections=[]):
+        # Eagerly publish phase value update
+        events.publish(PUBSUB_SET_PHASE, applied_z_modes)
+
         # Send values to device
-        actuator_values = self.proxy.set_phase(applied_z_modes, offset)
-
-        # Publish events
+        actuator_values = self.proxy.set_phase(applied_z_modes, offset=offset, corrections=corrections)
+        
+        # Publish actuator change
         events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
-        events.publish(PUBSUB_SET_PHASE, applied_z_modes, offset)
 
-
-# Start a timer to update modes.
-# self._timer = wx.Timer(self)
-# self._timer.Start(500)
-# self.Bind(wx.EVT_TIMER, self.RefreshModes, self._timer)
+        # Get corrections applied and publish
+        corrections_applied  = self.proxy.get_corrections(filter=corrections)
+        events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
