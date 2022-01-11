@@ -854,6 +854,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             self._device.proxy.set_metric(metric)
 
             logger.log.info("Set sensorless AO metric to: {}".format(metric))
+        
+        dlg.Destroy()
 
     def OnSetSensorlessParameters(self, event: wx.CommandEvent) -> None:
 
