@@ -247,9 +247,9 @@ class RemoteFocusControl(wx.Frame):
         # Mode slider: drag to set mode
         row_sizer = wx.BoxSizer(wx.HORIZONTAL)
         # default_range = 1.5   # range of slider
-        self.remotez = MinMaxSliderCtrl(control_panel, value=0)
-        self.remotez.Bind(EVT_VALUE, self.OnRemoteZ)
-        row_sizer.Add(self.remotez)
+        self.remotezSlider = MinMaxSliderCtrl(control_panel, value=0)
+        self.remotezSlider.Bind(EVT_VALUE, self.OnRemoteZ)
+        row_sizer.Add(self.remotezSlider)
         
         # Layout
         self.datatype_control = RFDatatypeChoice(control_panel)
@@ -331,7 +331,7 @@ class RemoteFocusControl(wx.Frame):
             self.listbox.AppendItems("{} ({})".format(d["z"],d["datatype"]))
 
     def OnRemoteZ(self, e):
-        self.z_target = self.remotez.GetValue()
+        self.z_target = self.remotezSlider.GetValue()
 
         mode = self.datatype_control.GetStringSelection().lower()
         self._device.remotez.set_z(self.z_target, mode)
