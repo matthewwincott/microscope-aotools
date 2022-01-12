@@ -255,6 +255,9 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         events.subscribe(PUBSUB_SET_PHASE, self.HandleSetPhase)
         events.subscribe(PUBSUB_APPLY_CORRECTIONS, self.HandleApplyCorrections)
 
+        # Bind close event
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
+
     def FilterModes(self):
         # Show only filtered modes
         modes_filtered = self.filter_modes.GetValue()
@@ -277,6 +280,14 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
 
     def OnCorrectionCheck(self, evt):
         self.RefreshModes()
+
+    def OnClose(self, evt):
+        # Unsubscribe from pubsub events
+        events.unsubscribe(PUBSUB_SET_PHASE, self.HandleSetPhase)
+        events.unsubscribe(PUBSUB_APPLY_CORRECTIONS, self.HandleApplyCorrections)
+        
+        # Continue + destroy frame
+        evt.Skip()
 
     def GetModes(self):
         modes = []

@@ -38,6 +38,9 @@ class SensorlessResultsViewer(wx.Frame):
 
         # Subscribe to pubsub events
         events.subscribe(PUBSUB_SENSORLESS_RESULTS, self.HandleSensorlessData)
+
+        # Bind to close event
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
         
 
     def update(self):
@@ -86,3 +89,10 @@ class SensorlessResultsViewer(wx.Frame):
     
     def HandleSensorlessData(self, data):
         self.set_data(data)
+    
+    def OnClose(self, evt):
+        # Unsubscribe from pubsub events
+        events.unsubscribe(PUBSUB_SENSORLESS_RESULTS, self.HandleSensorlessData)
+
+        # Continue + destroy frame
+        evt.Skip()
