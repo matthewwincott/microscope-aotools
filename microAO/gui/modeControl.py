@@ -173,6 +173,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         self._device = device
         control_matrix = self._device.proxy.get_controlMatrix()
         self._n_modes = control_matrix.shape[1]
+        last_corrections = self._device.proxy.get_last_corrections()
 
         # Create root panel and sizer
         root_panel = wx.Panel(self)
@@ -186,7 +187,9 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         # Corrections list
         corrections_lbl = wx.StaticText(root_panel, label="Corrections")
         self.corrections = wx.CheckListBox(root_panel, id=wx.ID_ANY, choices=DEFAULT_CORRECTIONS)
-        self.corrections.SetCheckedItems(list(range(self.corrections.Count)))
+        for i, checkbox in enumerate(list(self.corrections.GetItems())):
+            to_check = checkbox in last_corrections.keys()
+            self.corrections.Check(i, to_check)
         self.corrections.Bind(wx.EVT_CHECKLISTBOX, self.OnCorrectionCheck)
         hbox = wx.BoxSizer(wx.HORIZONTAL)
         hbox.Add(corrections_lbl, wx.SizerFlags().Centre().Border(wx.RIGHT, 8))
