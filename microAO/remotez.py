@@ -109,10 +109,7 @@ class RemoteZ():
             # Return sensorless params to previous
             self._device.sensorless_parms = params_prev
 
-    def zstack(self, zmin, zmax, zstepsize):
-        # -5 to 5 for stage: customised, 0.13 um, maybe 1 um
-        # 2 point calibration: 5 radians
-       
+    def zstack(self, zmin, zmax, zstepsize):     
         zsteps = int((zmax - zmin) // zstepsize)
         zpositions = np.linspace(zmin, zmin + zstepsize * zsteps, zsteps)
 
@@ -120,22 +117,17 @@ class RemoteZ():
         zstage = self._device.getStage(axis=2)
         mover = depot.getHandlerWithName("{}".format(zstage.name))
 
+        images = []
 
         for i, z in enumerate(zpositions):
-            # Calculate motion time and move
-            z_prev = zstage.getPosition()
-            motion_time, stabilise_time = mover.getMovementTime(z_prev, z)
-            total_move_time = motion_time + stabilise_time + 1
-            
-            move = partial(mover.moveAbsolute,z)
-            events.executeAndWaitForOrTimeout(
-                "{} {}".format(events.STAGE_STOPPED, zstage.name),
-                move,
-                total_move_time / 1000,
-            )
+            # Move in remote z
+            self.set_z(z)
 
+            # Capture image
             im = self._device.captureImage(camera)
+            images.append(im)
 
+        return images
 
     def add_datapoint(self, datapoint):
         self.datapoints.append(datapoint)

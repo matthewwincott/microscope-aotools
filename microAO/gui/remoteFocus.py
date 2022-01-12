@@ -16,6 +16,8 @@
 ## You should have received a copy of the GNU General Public License
 ## along with microAO.  If not, see <http://www.gnu.org/licenses/>.
 
+import os
+
 from cockpit import events
 import cockpit.gui.dialogs
 
@@ -28,6 +30,7 @@ from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 
 import numpy as np
 import scipy
+import imageio
 
 from microAO.events import *
 from microAO.gui.common import EVT_VALUE, FloatCtrl, FilterModesCtrl, MinMaxSliderCtrl
@@ -339,10 +342,7 @@ class RemoteFocusControl(wx.Frame):
         self.update_zpos()
 
     def OnRemoteZStack(self, e):
-        # -5 to 5 for stage: customised, 0.13 um, maybe 1 um
-        # 2 point calibration: 5 radians
-
-        
+        # Get parameters
         inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
             self,
             "Get remote Z stack parameters",
@@ -361,7 +361,7 @@ class RemoteFocusControl(wx.Frame):
 
         zmin = float(inputs[0])
         zmax = float(inputs[1])
-        zstepssize = int(inputs[2])
+        zstepssize = float(inputs[2])
 
         # Select output folder
         dlg = DirDialog(None, "Select data output directory")
@@ -370,9 +370,15 @@ class RemoteFocusControl(wx.Frame):
             output_dir = dlg.GetPath()
             print(output_dir)
         else:
-            pass
+            return
 
-        self._device.remotez.remotez_stack(zmin, zmax, zstepssize)
+        # Perform z stack
+        images = self._device.remotez.zstack(zmin, zmax, zstepssize)
+
+        # Save data
+        fname = "{}to{}".format(zmin, zmax).replace('.','_')+ ".tif"
+        fpath = os.path.join(output_dir, fname)
+        imageio.mimwrite(fpath, images, format="tif")
 
 
     def OnCalibrate(self, e):
