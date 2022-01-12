@@ -284,14 +284,11 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
     def OnCorrectionCheck(self, evt):
         self.RefreshModes()
 
-    def OnClose(self, evt):
+    def OnClose(self):
         # Unsubscribe from pubsub events
         events.unsubscribe(PUBSUB_SET_PHASE, self.HandleSetPhase)
         events.unsubscribe(PUBSUB_APPLY_CORRECTIONS, self.HandleApplyCorrections)
         
-        # Continue + destroy frame
-        evt.Skip()
-
     def GetModes(self):
         modes = []
         for mode_control in self._mode_controls:
@@ -348,3 +345,10 @@ class ModesControl(wx.Frame):
         self._sizer.Add(self._panel)
         self.SetSizerAndFit(self._sizer)
         self.SetTitle('DM mode control')
+        
+        self.Bind(wx.EVT_CLOSE, self.OnClose)
+    
+    def OnClose(self, evt):
+        self._panel.OnClose()
+
+        evt.Skip()
