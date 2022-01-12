@@ -1116,9 +1116,9 @@ class AdaptiveOpticsDevice(Device):
         if corrections_modes:
             total_corrections_phase = sum(corrections_modes)
         
-        corrections_offset = [np.array(val["actuator_values"]) for key, val in corrections_filtered.items() if (val["actuator_values"] is not None)]
+        corrections_offset = [(np.array(val["actuator_values"]) - 0.5) for key, val in corrections_filtered.items() if (val["actuator_values"] is not None)]
         if corrections_offset:
-            total_corrections_offset = sum(corrections_offset)
+            total_corrections_offset = sum(corrections_offset) + 0.5
         else:
             total_corrections_offset = None
         
