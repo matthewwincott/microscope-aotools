@@ -280,7 +280,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             z_ignore[self.sys_flat_parameters["sysFlatNollZernike"] - 1] = 1
         sys_flat_values, best_z_amps_corrected = self.proxy.flatten_phase(
             iterations=self.sys_flat_parameters["num_it"],
-            error_thresh=self.sys_flat_parameters["sys_error_thresh"],
+            error_thresh=self.sys_flat_parameters["error_thresh"],
             z_modes_ignore=z_ignore,
         )
 
