@@ -59,7 +59,7 @@ def _np_save_with_timestamp(data, basename_prefix):
 
 
 def log_correction_applied(
-    correction_stack,
+    image_stack,
     zernike_applied,
     nollZernike,
     sensorless_correct_coef,
@@ -69,7 +69,7 @@ def log_correction_applied(
 ):
     # Save full stack of images used
     # _np_save_with_timestamp(
-    #     np.asarray(correction_stack),
+    #     np.asarray(image_stack),
     #     "sensorless_AO_correction_stack",
     # )
 
@@ -105,7 +105,7 @@ def log_correction_applied(
     with h5py.File(ao_log_filepath, 'w') as f:
         # Assemble data to write
         data = [('timestamp', time.strftime("%Y%m%d_%H%M", time.gmtime())),
-                ('correction_stack',np.asarray(correction_stack)),
+                ('image_stack',np.asarray(image_stack)),
                 ('zernike_applied',zernike_applied),
                 ('nollZernike',nollZernike),
                 ('sensorless_correct_coef',sensorless_correct_coef),
@@ -318,8 +318,9 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.sensorless_data = {
             "actuator_offset" : None,
             "camera" : camera,
-            "correction_stack" : [],
+            "image_stack" : [],
             "metric_stack" : [],
+            "correction_stack" : [],
             "sensorless_correct_coef" : np.zeros(n_modes),          # Measured aberrations
             "z_steps" : np.linspace(self.sensorless_params["z_min"], self.sensorless_params["z_max"], self.sensorless_params["numMes"]),
             "zernike_applied" : np.zeros((0, n_modes)), # Array of all z aberrations to apply during experiment
@@ -352,9 +353,9 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         logger.log.info("Applying the first Zernike mode")
         # Apply the first Zernike mode
-        logger.log.debug(self.sensorless_data["zernike_applied"][len(self.sensorless_data["correction_stack"]), :])
+        logger.log.debug(self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :])
         self.set_phase(
-            self.sensorless_data["zernike_applied"][len(self.sensorless_data["correction_stack"]), :],
+            self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :],
             offset=self.sensorless_data["actuator_offset"],
         )
 
@@ -363,11 +364,11 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
     def correctSensorlessImage(self, image, timestamp):
         del timestamp
-        if len(self.sensorless_data["correction_stack"]) < self.sensorless_data["zernike_applied"].shape[0]:
+        if len(self.sensorless_data["image_stack"]) < self.sensorless_data["zernike_applied"].shape[0]:
             logger.log.info(
                 "Correction image %i/%i"
                 % (
-                    len(self.sensorless_data["correction_stack"]) + 1,
+                    len(self.sensorless_data["image_stack"]) + 1,
                     self.sensorless_data["zernike_applied"].shape[0],
                 )
             )
@@ -376,18 +377,18 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 "image count",
                 "Sensorless AO: image %s/%s, mode %s, meas. %s"
                 % (
-                    len(self.sensorless_data["correction_stack"]) + 1,
+                    len(self.sensorless_data["image_stack"]) + 1,
                     self.sensorless_data["zernike_applied"].shape[0],
                     self.sensorless_params["nollZernike"][
-                        len(self.sensorless_data["correction_stack"])
+                        len(self.sensorless_data["image_stack"])
                         // self.sensorless_params["numMes"]
                         % len(self.sensorless_params["nollZernike"])
                     ],
-                    (len(self.sensorless_data["correction_stack"]) + 1) % self.sensorless_params["numMes"] + 1,
+                    (len(self.sensorless_data["image_stack"]) + 1) % self.sensorless_params["numMes"] + 1,
                 ),
             )
             # Store image for current applied phase
-            self.sensorless_data["correction_stack"].append(np.ndarray.tolist(image))
+            self.sensorless_data["image_stack"].append(np.ndarray.tolist(image))
             wx.CallAfter(self.correctSensorlessProcessing)
         else:
             logger.log.error(
@@ -403,15 +404,15 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         pixelSize = wx.GetApp().Objectives.GetPixelSize() * 10 ** -6
 
         # Find aberration amplitudes and correct
-        ind = int(len(self.sensorless_data["correction_stack"]) / self.sensorless_params["numMes"])
+        ind = int(len(self.sensorless_data["image_stack"]) / self.sensorless_params["numMes"])
         nollInd = (
-            np.where(self.sensorless_data["zernike_applied"][len(self.sensorless_data["correction_stack"]) - 1, :])[
+            np.where(self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]) - 1, :])[
                 0
             ][0]
             + 1
         )
         logger.log.debug("Current Noll index being corrected: %i" % nollInd)
-        current_stack = np.asarray(self.sensorless_data["correction_stack"])[
+        current_stack = np.asarray(self.sensorless_data["image_stack"])[
             (ind - 1) * self.sensorless_params["numMes"] : ind * self.sensorless_params["numMes"], :, :
         ]
         (
@@ -435,13 +436,13 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
     def correctSensorlessProcessing(self):
         logger.log.info("Processing sensorless image")
-        if len(self.sensorless_data["correction_stack"]) < self.sensorless_data["zernike_applied"].shape[0]:
-            if len(self.sensorless_data["correction_stack"]) % self.sensorless_params["numMes"] == 0:
+        if len(self.sensorless_data["image_stack"]) < self.sensorless_data["zernike_applied"].shape[0]:
+            if len(self.sensorless_data["image_stack"]) % self.sensorless_params["numMes"] == 0:
                 self.correctSensorlessAberation()
 
             # Advance counter by 1 and apply next phase
             self.set_phase(
-                self.sensorless_data["zernike_applied"][len(self.sensorless_data["correction_stack"]), :],
+                self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :],
                 offset=self.sensorless_data["actuator_offset"],
             )
 
@@ -459,7 +460,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             self.correctSensorlessAberation()
 
             log_correction_applied(
-                self.sensorless_data["correction_stack"],
+                self.sensorless_data["image_stack"],
                 self.sensorless_data["zernike_applied"],
                 self.sensorless_params["nollZernike"],
                 self.sensorless_data["sensorless_correct_coef"],
@@ -479,10 +480,15 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             ao_correction = self.sensorless_data["sensorless_correct_coef"] * -1.0
             self.set_correction("sensorless", modes=ao_correction)
 
+        # Add current correction to stack
+        ao_correction = self.sensorless_data["sensorless_correct_coef"] * -1.0
+        self.sensorless_data["correction_stack"].append(np.ndarray.tolist(ao_correction))
+
         # Update/create metric plot
         sensorless_data = {
-            'correction_stack': self.sensorless_data["correction_stack"],
+            'image_stack': self.sensorless_data["image_stack"],
             'metric_stack': self.sensorless_data["metric_stack"],
+            'correction_stack': self.sensorless_data["correction_stack"],
             'nollZernike': self.sensorless_params["nollZernike"],
             'z_steps': self.sensorless_data["z_steps"],
             'iterations': self.sensorless_params["num_it"] 
