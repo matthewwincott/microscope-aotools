@@ -518,6 +518,52 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         return camera
 
+    def getStage(self, axis=2):
+        stages = depot.getSortedStageMovers()
+
+        stage = None
+
+        if axis not in stages.keys():
+            wx.MessageBox(
+                "There are no stages for axis {} enabled.".format(axis), caption="No stages with axis {} active".formaT(axis)
+            )
+
+            return None
+
+        if len(stages[axis]) == 1:
+            stage = stages[axis][0]
+        else:
+            stages_dict = dict((stage.descriptiveName, stage) for stage in stages[axis])
+
+            dlg = wx.SingleChoiceDialog(
+                None, "Select stage", 'Stage', list(stages_dict.keys()),
+            wx.CHOICEDLG_STYLE
+                )
+            if dlg.ShowModal() == wx.ID_OK:
+                stage = stages_dict[dlg.GetStringSelection()]
+
+        return stage
+
+    def captureImage(self, camera, timeout=2.0):
+        # Set capture method
+        imager = depot.getHandlerWithName("{} imager".format(camera.name))
+        capture_method = imager.takeImage
+
+        # Calculate timeout
+        timeout_total = camera.getExposureTime() / 1000 + timeout 
+
+        # Fire capture action with timeout
+        result = events.executeAndWaitForOrTimeout(
+            events.NEW_IMAGE % camera.name,
+            capture_method,
+            timeout_total,
+        )
+
+        if result is not None:
+            return result[0]
+        else:
+            raise TimeoutError("Camera capture timed out")
+
     def get_system_flat(self):
         sys_flat = np.asarray(userConfig.getValue("dm_sys_flat"))
 
