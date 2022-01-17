@@ -114,8 +114,6 @@ class RemoteZ():
         zpositions = np.linspace(zmin, zmin + zstepsize * zsteps, zsteps)
 
         camera = self._device.getCamera()
-        zstage = self._device.getStage(axis=2)
-        mover = depot.getHandlerWithName("{}".format(zstage.name))
 
         images = []
 
