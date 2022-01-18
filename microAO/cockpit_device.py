@@ -524,6 +524,28 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         return camera
 
+    def getImager(self):
+        imagers = depot.getHandlersOfType(depot.IMAGER)
+
+        imager = None
+        if not imagers:
+            wx.MessageBox(
+                "There are no available imagers.", caption="No imagers"
+            )
+        elif len(imagers) == 1:
+            imagers = imagers[0]
+        else:
+            imagers_dict = dict([(imager.name, imager) for imager in imagers])
+
+            dlg = wx.SingleChoiceDialog(
+                None, "Select imager", 'Imager', list(imagers_dict.keys()),
+            wx.CHOICEDLG_STYLE
+                )
+            if dlg.ShowModal() == wx.ID_OK:
+                imager = imagers_dict[dlg.GetStringSelection()]
+        
+        return imager
+
     def getStage(self, axis=2):
         stages = depot.getSortedStageMovers()
 
@@ -539,7 +561,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         if len(stages[axis]) == 1:
             stage = stages[axis][0]
         else:
-            stages_dict = dict((stage.descriptiveName, stage) for stage in stages[axis])
+            stages_dict = dict((stage.name, stage) for stage in stages[axis])
 
             dlg = wx.SingleChoiceDialog(
                 None, "Select stage", 'Stage', list(stages_dict.keys()),
@@ -550,19 +572,19 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         return stage
 
-    def captureImage(self, camera, timeout=2.0):
+    def captureImage(self, camera, imager, timeout=5.0):
         # Set capture method
-        imager = depot.getHandlerWithName("{} imager".format(camera.name))
         capture_method = imager.takeImage
 
-        # Calculate timeout
-        timeout_total = camera.getExposureTime() / 1000 + timeout 
+        # Add camera timeout
+        camera_timeout = camera.getExposureTime()+ camera.getTimeBetweenExposures()/1000
+        timeout = timeout + camera_timeout
 
         # Fire capture action with timeout
         result = events.executeAndWaitForOrTimeout(
             events.NEW_IMAGE % camera.name,
             capture_method,
-            timeout_total,
+            timeout,
         )
 
         if result is not None:

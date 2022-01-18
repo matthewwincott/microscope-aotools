@@ -114,8 +114,9 @@ class RemoteZ():
         zpositions = np.linspace(zmin, zmin + zstepsize * zsteps, zsteps)
 
         camera = self._device.getCamera()
+        imager = self._device.getImager()
 
-        if camera is None:
+        if camera is None or imager is None:
             return
 
         images = []
@@ -125,7 +126,7 @@ class RemoteZ():
             self.set_z(z)
 
             # Capture image
-            im = self._device.captureImage(camera)
+            im = self._device.captureImage(camera, imager)
             images.append(im)
 
         return images
