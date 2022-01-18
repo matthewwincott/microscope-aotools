@@ -115,6 +115,9 @@ class RemoteZ():
 
         camera = self._device.getCamera()
 
+        if camera is None:
+            return
+
         images = []
 
         for i, z in enumerate(zpositions):
