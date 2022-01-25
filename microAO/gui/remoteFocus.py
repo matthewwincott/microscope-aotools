@@ -376,9 +376,10 @@ class RemoteFocusControl(wx.Frame):
         images = self._device.remotez.zstack(zmin, zmax, zstepssize)
 
         # Save data
-        fname = "{}to{}".format(zmin, zmax).replace('.','_')+ ".tif"
-        fpath = os.path.join(output_dir, fname)
-        imageio.mimwrite(fpath, images, format="tif")
+        for i,image in enumerate(images):
+            fname = "{}to{}-{:03}".format(zmin, zmax, i).replace('.','_')+ ".tif"
+            fpath = os.path.join(output_dir, fname)
+            imageio.imwrite(fpath, image, format='tif')
 
 
     def OnCalibrate(self, e):
