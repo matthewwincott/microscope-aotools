@@ -205,14 +205,22 @@ class _ROISelect(wx.Frame):
 
 
 class _PhaseViewer(wx.Frame):
-    """This is a window for selecting the ROI for interferometry."""
+    """This is a window for visualising a phase map."""
 
-    def __init__(self, parent, input_image, image_ft, RMS_error, *args, **kwargs):
+    def __init__(self, parent, phase, phase_roi, phase_unwrapped, phase_power_spectrum, phase_unwrapped_MPTT_RMS_error, *args, **kwargs):
         super().__init__(parent, title="Phase View")
         self._panel = wx.Panel(self, *args, **kwargs)
 
-        _wx_img_real = _np_grey_img_to_wx_image(input_image)
-        _wx_img_fourier = _np_grey_img_to_wx_image(image_ft)
+        # Store the important data
+        self._data = {
+            "phase": phase,
+            "phase_roi": phase_roi,
+            "phase_unwrapped": phase_unwrapped,
+            "phase_unwrapped_MPTT_RMS_error": phase_unwrapped_MPTT_RMS_error
+        }
+
+        _wx_img_real = _np_grey_img_to_wx_image(phase_unwrapped)
+        _wx_img_fourier = _np_grey_img_to_wx_image(phase_power_spectrum)
 
         self._canvas = FloatCanvas(self._panel, size=_wx_img_real.GetSize())
         self._real_bmp = self._canvas.AddBitmap(
@@ -225,18 +233,22 @@ class _PhaseViewer(wx.Frame):
         # By default, show real and hide the fourier transform.
         self._fourier_bmp.Hide()
 
-        save_btn = wx.ToggleButton(self._panel, label="Show Fourier")
-        save_btn.Bind(wx.EVT_TOGGLEBUTTON, self.OnToggleFourier)
+        button_fourier = wx.ToggleButton(self._panel, label="Show Fourier")
+        button_fourier.Bind(wx.EVT_TOGGLEBUTTON, self._OnToggleFourier)
+
+        button_save = wx.Button(self._panel, label="Save data")
+        button_save.Bind(wx.EVT_BUTTON, self._OnButtonSave)
 
         self._rms_txt = wx.StaticText(
-            self._panel, label="RMS difference: %.05f" % (RMS_error)
+            self._panel, label="RMS error without piston, tip, and tilt modes: %.05f" % (phase_unwrapped_MPTT_RMS_error)
         )
 
         panel_sizer = wx.BoxSizer(wx.VERTICAL)
         panel_sizer.Add(self._canvas)
 
         bottom_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        bottom_sizer.Add(save_btn, wx.SizerFlags().Center().Border())
+        bottom_sizer.Add(button_fourier, wx.SizerFlags().Center().Border())
+        bottom_sizer.Add(button_save, wx.SizerFlags().Center().Border())
         bottom_sizer.Add(self._rms_txt, wx.SizerFlags().Center().Border())
         panel_sizer.Add(bottom_sizer)
 
@@ -246,7 +258,7 @@ class _PhaseViewer(wx.Frame):
         frame_sizer.Add(self._panel)
         self.SetSizerAndFit(frame_sizer)
 
-    def OnToggleFourier(self, event: wx.CommandEvent) -> None:
+    def _OnToggleFourier(self, event: wx.CommandEvent) -> None:
         show_fourier = event.IsChecked()
         # These bmp are wx.lib.floatcanvas.FCObjects.Bitmap and not
         # wx.Bitmap.  Their Show method does not take show argument
@@ -259,20 +271,25 @@ class _PhaseViewer(wx.Frame):
             self._fourier_bmp.Hide()
         self._canvas.Draw(Force=True)
 
-    def SetData(self, input_image, image_ft=None, RMS_error=None):
-        _wx_img_real = _np_grey_img_to_wx_image(input_image)
-        _wx_img_fourier = _np_grey_img_to_wx_image(image_ft)
-
-        self._real_bmp.Bitmap.CopyFromBuffer(_wx_img_real.GetData())
-        self._fourier_bmp.Bitmap.CopyFromBuffer(_wx_img_fourier.GetData())
-        
-        self._canvas.Draw(Force=True)
-
-        self._rms_txt.SetLabel("RMS difference: %.05f" % (RMS_error))
+    def _OnButtonSave(self, event: wx.CommandEvent) -> None:
+        file_path = ""
+        with wx.FileDialog(
+            self,
+            "Save phase data",
+            wildcard="Numpy binary file (*.npy)|*.npy",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as file_dialog:
+            if file_dialog.ShowModal() != wx.ID_OK:
+                return
+            file_path = file_dialog.GetPath()
+        np.save(file_path, self._data)
 
 class _CharacterisationAssayViewer(wx.Frame):
     def __init__(self, parent, characterisation_assay):
         super().__init__(parent, title="Characterisation Asssay")
+
+        self._assay = characterisation_assay
+
         root_panel = wx.Panel(self)
 
         figure = Figure()
@@ -294,14 +311,33 @@ class _CharacterisationAssayViewer(wx.Frame):
             ),
         )
 
+        button_save = wx.Button(root_panel, label="Save assay")
+        button_save.Bind(wx.EVT_BUTTON, self._OnButtonSave)
+
         panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        panel_sizer.Add(info_txt, wx.SizerFlags().Centre().Border())
+        top_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        top_sizer.Add(button_save, wx.SizerFlags().Center().Border())
+        top_sizer.Add(info_txt, wx.SizerFlags().Center().Border())
+        panel_sizer.Add(top_sizer)
         panel_sizer.Add(canvas, wx.SizerFlags(1).Expand())
         root_panel.SetSizer(panel_sizer)
 
         frame_sizer = wx.BoxSizer(wx.VERTICAL)
         frame_sizer.Add(root_panel, wx.SizerFlags().Expand())
         self.SetSizerAndFit(frame_sizer)
+
+    def _OnButtonSave(self, event: wx.CommandEvent) -> None:
+        file_path = ""
+        with wx.FileDialog(
+            self,
+            "Save characterisation assay",
+            wildcard="Numpy binary file (*.npy)|*.npy",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as file_dialog:
+            if file_dialog.ShowModal() != wx.ID_OK:
+                return
+            file_path = file_dialog.GetPath()
+        np.save(file_path, self._assay)
 
 class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def __init__(self, parent, device):
@@ -538,16 +574,21 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         self._device.updateROI()
         self._device.checkFourierFilter()
 
-        interferogram, unwrapped_phase = self._device.acquireUnwrappedPhase()
-        power_spectrum = _computePowerSpectrum(interferogram)
-        unwrapped_phase_mptt = _computeUnwrappedPhaseMPTT(unwrapped_phase)
+        phase, phase_unwrapped = self._device.acquireUnwrappedPhase()
+        phase_power_spectrum = _computePowerSpectrum(phase)
+        phase_unwrapped_mptt = _computeUnwrappedPhaseMPTT(phase_unwrapped)
 
-        unwrapped_RMS_error = self._device.wavefrontRMSError(
-            unwrapped_phase_mptt
+        phase_unwrapped_MPTT_RMS_error = self._device.wavefrontRMSError(
+            phase_unwrapped_mptt
         )
 
         frame = _PhaseViewer(
-            self, unwrapped_phase, power_spectrum, unwrapped_RMS_error
+            self,
+            phase,
+            self._device.proxy.get_roi(),
+            phase_unwrapped,
+            phase_power_spectrum,
+            phase_unwrapped_MPTT_RMS_error
         )
         frame.Show()
 
