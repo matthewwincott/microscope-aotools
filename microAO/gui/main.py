@@ -1,13 +1,19 @@
 from microAO.aoDev import AdaptiveOpticsDevice
 from microAO.remotez import RemoteZ
 from microAO.gui import *
+from microAO.gui.modeControl import ModesControl
+from microAO.gui.remoteFocus import RemoteFocusControl
+from microAO.gui.sensorlessViewer import SensorlessResultsViewer
+from microAO.gui.DMViewer import DMViewer
+from microAO import cockpit_device
 
 import cockpit.gui.device
-from cockpit import depot
+import cockpit.gui.camera.window
 from cockpit.util import logger, userConfig
 
 import wx
 from wx.lib.floatcanvas.FloatCanvas import FloatCanvas
+import wx.lib.floatcanvas.FCObjects as FCObjects
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
@@ -16,13 +22,10 @@ import numpy as np
 
 import aotools
 import typing
+import pathlib
+import json
 
-from microAO.gui.modeControl import ModesControl
-from microAO.gui.remoteFocus import RemoteFocusControl
-from microAO.gui.sensorlessViewer import SensorlessResultsViewer
-from microAO.gui.DMViewer import DMViewer
-
-_ROI_MIN_RADIUS = 8
+import tifffile
 
 
 def _np_grey_img_to_wx_image(np_img: np.ndarray) -> wx.Image:
@@ -43,43 +46,6 @@ def _np_grey_img_to_wx_image(np_img: np.ndarray) -> wx.Image:
     return wx_img
 
 
-def _bin_ndarray(ndarray, new_shape):
-    """Bins an ndarray in all axes based on the target shape by averaging.
-
-
-    Number of output dimensions must match number of input dimensions
-    and new axes must divide old ones.
-
-    Example
-    -------
-
-    m = np.arange(0,100,1).reshape((10,10))
-    n = bin_ndarray(m, new_shape=(5,5))
-    print(n)
-    [[ 5.5  7.5  9.5 11.5 13.5]
-     [25.5 27.5 29.5 31.5 33.5]
-     [45.5 47.5 49.5 51.5 53.5]
-     [65.5 67.5 69.5 71.5 73.5]
-     [85.5 87.5 89.5 91.5 93.5]]
-
-    Function acquired from Stack Overflow at
-    https://stackoverflow.com/a/29042041. Stack Overflow or other
-    Stack Exchange sites is cc-wiki (aka cc-by-sa) licensed and
-    requires attribution.
-
-    """
-    if ndarray.ndim != len(new_shape):
-        raise ValueError(
-            "Shape mismatch: {} -> {}".format(ndarray.shape, new_shape)
-        )
-    compression_pairs = [(d, c // d) for d, c in zip(new_shape, ndarray.shape)]
-    flattened = [l for p in compression_pairs for l in p]
-    ndarray = ndarray.reshape(flattened)
-    for i in range(len(new_shape)):
-        ndarray = ndarray.mean(-1 * (i + 1))
-    return ndarray
-
-
 def _computeUnwrappedPhaseMPTT(unwrapped_phase):
     # XXX: AdaptiveOpticsDevice.getzernikemodes method does not
     # actually make use of its instance.  It should have been a free
@@ -96,88 +62,146 @@ def _computePowerSpectrum(interferogram):
     power_spectrum = np.log(abs(interferogram_ft))
     return power_spectrum
 
-class _ROISelect(wx.Frame):
+class _ROISelect(wx.Dialog):
     """Display a window that allows the user to select a circular area.
 
     This is a window for selecting the ROI for interferometry.
     """
 
-    def __init__(
-        self, parent, input_image: np.ndarray, initial_roi, scale_factor=1
-    ) -> None:
-        super().__init__(parent, title="ROI selector")
-        self._panel = wx.Panel(self)
-        self._img = _np_grey_img_to_wx_image(input_image)
-        self._range_factor = scale_factor
+    _INITIAL_IMAGE_HEIGHT = 512
+    _ROI_MIN_RADIUS = 32
+
+    def __init__(self, parent, image_or_path) -> None:
+        super().__init__(
+            parent,
+            title="ROI selector",
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
+        )
 
         # What, if anything, is being dragged.
         # XXX: When we require Python 3.8, annotate better with
         # `typing.Literal[None, "xy", "r"]`
         self._dragging: typing.Optional[str] = None
 
-        # Canvas
-        self.canvas = FloatCanvas(self._panel, size=self._img.GetSize())
-        self.canvas.Bind(wx.EVT_MOUSE_EVENTS, self.OnMouse)
-        self.bitmap = self.canvas.AddBitmap(self._img, (0, 0), Position="cc")
+        # Create a wx image instance
+        if isinstance(image_or_path, np.ndarray):
+            # Argument is image => use it directly
+            self._img = _np_grey_img_to_wx_image(image_or_path)
+        else:
+            # Argument is path => load the first frame of the image
+            frame = tifffile.imread(image_or_path, key=0)
+            self._img = _np_grey_img_to_wx_image(frame)
 
-        self.circle = self.canvas.AddCircle(
-            self.canvas.PixelToWorld(initial_roi[:2]),
-            initial_roi[2] * 2,
-            LineColor="cyan",
-            LineWidth=2,
+        # Calculate image scale based on size of the canvas
+        self._scale = self._INITIAL_IMAGE_HEIGHT / self._img.GetHeight()
+
+        # Derive the initial ROI, in pixel units
+        init_roi = userConfig.getValue("dm_circleParams")
+        if init_roi is None:
+            init_roi = (
+                *[d // 2 for d in self._img.GetSize()],
+                min(self._img.GetSize()) // 4,
+            )
+        init_roi = (
+            init_roi[1] * self._scale,
+            init_roi[0] * self._scale,
+            init_roi[2] * self._scale,
         )
 
-        # Save button
-        saveBtn = wx.Button(self._panel, label="Save ROI")
-        saveBtn.Bind(wx.EVT_BUTTON, self.OnSave)
+        # Create the canvas and draw the required objects
+        # NOTE: World and screen coordinates have the same unit (pixel) but
+        # different origins. The world origin is centre of the canvas, whereas
+        # the screen origin is in the top left corner.
+        self._canvas = FloatCanvas(
+            self,
+            size=wx.Size(
+                self._INITIAL_IMAGE_HEIGHT,
+                self._INITIAL_IMAGE_HEIGHT
+            )
+        )
+        self._canvas_bitmap = self._canvas.AddObject(
+            FCObjects.ScaledBitmap(
+                self._img,
+                (0, 0),
+                self._INITIAL_IMAGE_HEIGHT,
+                Position="cc"
+            )
+        )
+        self._canvas_circle = self._canvas.AddObject(
+            FCObjects.Circle(
+                self._canvas.PixelToWorld(init_roi[:2]),
+                init_roi[2] * 2,
+                LineColor="cyan",
+                LineWidth=2,
+                InForeground=True
+            )
+        )
+        self._canvas.Bind(wx.EVT_MOUSE_EVENTS, self._OnMouse)
+        self._canvas.Bind(wx.EVT_SIZE, self._OnSize)
 
-        panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        panel_sizer.Add(self.canvas)
-        panel_sizer.Add(saveBtn, wx.SizerFlags().Border())
-        self._panel.SetSizer(panel_sizer)
+        # Create the standard buttons
+        sizer_stdbuttons = wx.StdDialogButtonSizer()
+        for button_id in (wx.ID_OK, wx.ID_CANCEL):
+            button = wx.Button(self, button_id)
+            sizer_stdbuttons.Add(button)
+        sizer_stdbuttons.Realize()
 
-        frame_sizer = wx.BoxSizer(wx.VERTICAL)
-        frame_sizer.Add(self._panel)
-        self.SetSizerAndFit(frame_sizer)
+        # Finalise layout
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self._canvas, 1, wx.SHAPED)
+        sizer.Add(sizer_stdbuttons, 0, wx.ALL, 5)
+        self.SetSizerAndFit(sizer)
 
-    @property
-    def ROI(self):
-        """Convert circle parameters to ROI x, y and radius"""
-        roi_x, roi_y = self.canvas.WorldToPixel(self.circle.XY)
-        roi_r = max(self.circle.WH)
+    def GetROI(self):
+        return [x / self._scale for x in self._circle_roi()]
+
+    def _circle_roi(self):
+        """Convert circle world parameters to ROI in screen coordinates."""
+        roi_x, roi_y = self._canvas.WorldToPixel(self._canvas_circle.XY)
+        roi_r = max(self._canvas_circle.WH)
         return (roi_x, roi_y, roi_r)
 
-    def OnSave(self, event: wx.CommandEvent) -> None:
-        del event
-        roi = [x * self._range_factor for x in self.ROI]
-        userConfig.setValue("dm_circleParams", (roi[1], roi[0], roi[2]))
-
-    def MoveCircle(self, pos: wx.Point, r) -> None:
+    def _MoveCircle(self, pos: wx.Point, r) -> None:
         """Set position and radius of circle with bounds checks."""
         x, y = pos
-        _x, _y, _r = self.ROI
-        xmax, ymax = self._img.GetSize()
-        if r == _r:
-            x_bounded = min(max(r, x), xmax - r)
-            y_bounded = min(max(r, y), ymax - r)
-            r_bounded = r
+        _, _, _r = self._circle_roi()
+        img_dims = [d * self._scale for d in self._img.GetSize()]
+        # Calculate the radius
+        r_bounded = r
+        if r != _r:
+            r_bounded = max(
+                min(
+                    img_dims[0] - pos[0],  # clip to right
+                    img_dims[1] - pos[1],  # clip to bottom
+                    pos[0],  # clip to left
+                    pos[1],  # clip to top
+                    r  # necessary for the outer max() to work
+                ),
+                self._ROI_MIN_RADIUS,
+            )
+        # Calculate XY
+        xy_bounded = [None, None]
+        for i in range(2):
+            xy_bounded[i] = min(
+                max(r_bounded, pos[i]),  # clip to left and top
+                img_dims[i] - r_bounded  # clip to right and bottom
+            )
+        # Set circle parameters
+        self._canvas_circle.SetPoint(
+            self._canvas.PixelToWorld(xy_bounded)
+        )
+        self._canvas_circle.SetDiameter(2 * r_bounded)
+        if any((xy_bounded[0] != pos[0], xy_bounded[1] != pos[1], r_bounded != r)):
+            self._canvas_circle.SetColor("magenta")
         else:
-            r_bounded = max(_ROI_MIN_RADIUS, min(xmax - x, x, ymax - y, y, r))
-            x_bounded = min(max(r_bounded, x), xmax - r_bounded)
-            y_bounded = min(max(r_bounded, y), ymax - r_bounded)
-        self.circle.SetPoint(self.canvas.PixelToWorld((x_bounded, y_bounded)))
-        self.circle.SetDiameter(2 * r_bounded)
-        if any((x_bounded != x, y_bounded != y, r_bounded != r)):
-            self.circle.SetColor("magenta")
-        else:
-            self.circle.SetColor("cyan")
+            self._canvas_circle.SetColor("cyan")
 
-    def OnMouse(self, event: wx.MouseEvent) -> None:
+    def _OnMouse(self, event: wx.MouseEvent) -> None:
         pos = event.GetPosition()
-        x, y, r = self.ROI
+        x, y, r = self._circle_roi()
         if event.LeftDClick():
             # Set circle centre
-            self.MoveCircle(pos, r)
+            self._MoveCircle(pos, r)
         elif event.Dragging():
             # Drag circle centre or radius
             drag_r = np.sqrt((x - pos[0]) ** 2 + (y - pos[1]) ** 2)
@@ -191,21 +215,51 @@ class _ROISelect(wx.Frame):
                     self._dragging = "r"
             elif self._dragging == "r":
                 # Drag circle radius
-                self.MoveCircle((x, y), drag_r)
+                self._MoveCircle((x, y), drag_r)
             elif self._dragging == "xy":
                 # Drag circle centre
-                self.MoveCircle(pos, r)
+                self._MoveCircle(pos, r)
 
         if not event.Dragging():
             # Stop dragging
             self._dragging = None
-            self.circle.SetColor("cyan")
+            self._canvas_circle.SetColor("cyan")
 
-        self.canvas.Draw(Force=True)
+        self._canvas.Draw(Force=True)
 
+    def _OnSize(self, event: wx.SizeEvent):
+        size_canvas_new = event.GetSize()
+        size_canvas_old = (
+            self._canvas_bitmap.Width,
+            self._canvas_bitmap.Height
+        )
+        # Calculate new scales
+        self._scale = size_canvas_new[1] / self._img.GetHeight()
+        circle_scale = size_canvas_new[1] / size_canvas_old[1]
+        # Re-add the bitmap
+        self._canvas.RemoveObject(self._canvas_bitmap)
+        self._canvas_bitmap = self._canvas.AddObject(
+            FCObjects.ScaledBitmap(
+                self._img,
+                (0, 0),
+                size_canvas_new[1],
+                Position="cc"
+            )
+        )
+        # Scale the circle
+        self._canvas_circle.SetPoint(
+            [d * circle_scale for d in self._canvas_circle.XY]
+        )
+        self._canvas_circle.SetDiameter(
+            self._canvas_circle.WH[0] * 2 * circle_scale
+        )
+        # Let the FloatCanvas handle the event too
+        event.Skip()
 
 class _PhaseViewer(wx.Frame):
     """This is a window for visualising a phase map."""
+
+    _INITIAL_IMAGE_HEIGHT = 512
 
     def __init__(self, parent, phase, phase_roi, phase_unwrapped, phase_power_spectrum, phase_unwrapped_MPTT_RMS_error, *args, **kwargs):
         super().__init__(parent, title="Phase View")
@@ -219,22 +273,40 @@ class _PhaseViewer(wx.Frame):
             "phase_unwrapped_MPTT_RMS_error": phase_unwrapped_MPTT_RMS_error
         }
 
-        _wx_img_real = _np_grey_img_to_wx_image(phase_unwrapped)
-        _wx_img_fourier = _np_grey_img_to_wx_image(phase_power_spectrum)
+        self._img_real = _np_grey_img_to_wx_image(phase_unwrapped)
+        self._img_fourier = _np_grey_img_to_wx_image(phase_power_spectrum)
 
-        self._canvas = FloatCanvas(self._panel, size=_wx_img_real.GetSize())
-        self._real_bmp = self._canvas.AddBitmap(
-            _wx_img_real, (0, 0), Position="cc"
+        self._canvas = FloatCanvas(
+            self._panel,
+            size=wx.Size(
+                self._INITIAL_IMAGE_HEIGHT,
+                self._INITIAL_IMAGE_HEIGHT
+            )
         )
-        self._fourier_bmp = self._canvas.AddBitmap(
-            _wx_img_fourier, (0, 0), Position="cc"
+        self._canvas.Bind(wx.EVT_SIZE, self._OnSize)
+
+        self._canvas_bmp_real = self._canvas.AddObject(
+            FCObjects.ScaledBitmap(
+                self._img_real,
+                (0, 0),
+                self._INITIAL_IMAGE_HEIGHT,
+                Position="cc"
+            )
+        )
+        self._canvas_bmp_fourier = self._canvas.AddObject(
+            FCObjects.ScaledBitmap(
+                self._img_fourier,
+                (0, 0),
+                self._INITIAL_IMAGE_HEIGHT,
+                Position="cc"
+            )
         )
 
         # By default, show real and hide the fourier transform.
-        self._fourier_bmp.Hide()
+        self._canvas_bmp_fourier.Hide()
 
-        button_fourier = wx.ToggleButton(self._panel, label="Show Fourier")
-        button_fourier.Bind(wx.EVT_TOGGLEBUTTON, self._OnToggleFourier)
+        self._button_fourier = wx.ToggleButton(self._panel, label="Show Fourier")
+        self._button_fourier.Bind(wx.EVT_TOGGLEBUTTON, self._OnToggleFourier)
 
         button_save = wx.Button(self._panel, label="Save data")
         button_save.Bind(wx.EVT_BUTTON, self._OnButtonSave)
@@ -244,31 +316,34 @@ class _PhaseViewer(wx.Frame):
         )
 
         panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        panel_sizer.Add(self._canvas)
+        panel_sizer.Add(self._canvas, 1, wx.SHAPED)
 
         bottom_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        bottom_sizer.Add(button_fourier, wx.SizerFlags().Center().Border())
+        bottom_sizer.Add(
+            self._button_fourier,
+            wx.SizerFlags().Center().Border()
+        )
         bottom_sizer.Add(button_save, wx.SizerFlags().Center().Border())
         bottom_sizer.Add(self._rms_txt, wx.SizerFlags().Center().Border())
-        panel_sizer.Add(bottom_sizer)
+        panel_sizer.Add(bottom_sizer, 0, wx.EXPAND)
 
         self._panel.SetSizer(panel_sizer)
 
         frame_sizer = wx.BoxSizer(wx.VERTICAL)
-        frame_sizer.Add(self._panel)
+        frame_sizer.Add(self._panel, 1, wx.EXPAND)
         self.SetSizerAndFit(frame_sizer)
 
     def _OnToggleFourier(self, event: wx.CommandEvent) -> None:
-        show_fourier = event.IsChecked()
+        show_fourier = self._button_fourier.GetValue()
         # These bmp are wx.lib.floatcanvas.FCObjects.Bitmap and not
         # wx.Bitmap.  Their Show method does not take show argument
         # and therefore we can't do `Show(show_fourier)`.
         if show_fourier:
-            self._fourier_bmp.Show()
-            self._real_bmp.Hide()
+            self._canvas_bmp_fourier.Show()
+            self._canvas_bmp_real.Hide()
         else:
-            self._real_bmp.Show()
-            self._fourier_bmp.Hide()
+            self._canvas_bmp_real.Show()
+            self._canvas_bmp_fourier.Hide()
         self._canvas.Draw(Force=True)
 
     def _OnButtonSave(self, event: wx.CommandEvent) -> None:
@@ -283,6 +358,31 @@ class _PhaseViewer(wx.Frame):
                 return
             file_path = file_dialog.GetPath()
         np.save(file_path, self._data)
+
+    def _OnSize(self, event: wx.SizeEvent):
+        new_canvas_height = event.GetSize()[1]
+        # Re-add the bitmaps
+        self._canvas.RemoveObject(self._canvas_bmp_real)
+        self._canvas_bmp_real = self._canvas.AddObject(
+            FCObjects.ScaledBitmap(
+                self._img_real,
+                (0, 0),
+                new_canvas_height,
+                Position="cc"
+            )
+        )
+        self._canvas.RemoveObject(self._canvas_bmp_fourier)
+        self._canvas_bmp_fourier = self._canvas.AddObject(
+            FCObjects.ScaledBitmap(
+                self._img_fourier,
+                (0, 0),
+                new_canvas_height,
+                Position="cc"
+            )
+        )
+        self._OnToggleFourier(wx.CommandEvent())
+        # Let the FloatCanvas handle the event too
+        event.Skip()
 
 class _CharacterisationAssayViewer(wx.Frame):
     def __init__(self, parent, characterisation_assay):
@@ -396,17 +496,21 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         setCurrentAsFlatButton = wx.Button(panel_control, label="Set current as flat")
         setCurrentAsFlatButton.Bind(wx.EVT_BUTTON, self.OnSetCurrentAsFlat)
 
-        # Button to select the interferometer ROI
-        selectCircleButton = wx.Button(panel_calibration, label="Select ROI")
-        selectCircleButton.Bind(wx.EVT_BUTTON, self.OnSelectROI)
-
         # Visualise current interferometric phase
         visPhaseButton = wx.Button(panel_calibration, label="Visualise Phase")
         visPhaseButton.Bind(wx.EVT_BUTTON, self.OnVisualisePhase)
 
-        # Button to calibrate the DM
-        calibrateButton = wx.Button(panel_calibration, label="Calibrate")
-        calibrateButton.Bind(wx.EVT_BUTTON, self.OnCalibrate)
+        # Button to set calibration parameters
+        calibrationParametersButton = wx.Button(panel_calibration, label="Calibration parameters")
+        calibrationParametersButton.Bind(wx.EVT_BUTTON, self.OnCalibrationParameters)
+
+        # Button to get calibration data
+        calibrationGetDataButton = wx.Button(panel_calibration, label="Get calibration data")
+        calibrationGetDataButton.Bind(wx.EVT_BUTTON, self.OnCalibrationData)
+
+        # Button to calculate control matrix
+        calibrationCalcButton = wx.Button(panel_calibration, label="Calculate control matrix")
+        calibrationCalcButton.Bind(wx.EVT_BUTTON, self.OnCalibrationCalc)
 
         # Button to characterise DM
         characteriseButton = wx.Button(panel_calibration, label="Characterise")
@@ -469,9 +573,10 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         sizer_calibration = wx.BoxSizer(wx.VERTICAL)
         for btn in [
-            selectCircleButton,
             visPhaseButton,
-            calibrateButton,
+            calibrationParametersButton,
+            calibrationGetDataButton,
+            calibrationCalcButton,
             characteriseButton,
             sysFlatParametersButton,
             sysFlatCalcButton
@@ -520,81 +625,132 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         sizer_main.Add(tabs, wx.SizerFlags(1).Expand())
         self.SetSizer(sizer_main)
 
-    def OnSelectROI(self, event: wx.CommandEvent) -> None:
-        del event
-        image_raw = self._device.acquireRaw()
-        if np.max(image_raw) > 10:
-            original_dim = np.shape(image_raw)[0]
-            resize_dim = 512
-
-            while original_dim % resize_dim != 0:
-                resize_dim -= 1
-
-            if resize_dim < original_dim / resize_dim:
-                resize_dim = int(np.round(original_dim / resize_dim))
-
-            scale_factor = original_dim / resize_dim
-            img = _bin_ndarray(image_raw, new_shape=(resize_dim, resize_dim))
-            img = np.require(img, requirements="C")
-
-            last_roi = userConfig.getValue(
-                "dm_circleParams",
-            )
-            # We need to check if getValue() returns None, instead of
-            # passing a default value to getValue().  The reason is
-            # that if there is no ROI at the start, by the time we get
-            # here the device initialize has called updateROI which
-            # also called getValue() which has have the side effect of
-            # setting its value to None.  And we can't set a sensible
-            # default at that time because we have no method to get
-            # the wavefront camera sensor size.
-            if last_roi is None:
-                last_roi = (
-                    *[d // 2 for d in image_raw.shape],
-                    min(image_raw.shape) // 4,
-                )
-
-            last_roi = (
-                last_roi[1] / scale_factor,
-                last_roi[0] / scale_factor,
-                last_roi[2] / scale_factor,
-            )
-
-            frame = _ROISelect(self, img, last_roi, scale_factor)
-            frame.Show()
-        else:
-            wx.MessageBox(
-                "Detected nothing but background noise.",
-                caption="No good image acquired",
-                style=wx.ICON_ERROR | wx.OK | wx.CENTRE,
-            )
-
     def OnVisualisePhase(self, event: wx.CommandEvent) -> None:
-        del event
+        # Select the camera whose window contains the interferogram
+        camera = self._device.getCamera()
+        if camera is None:
+            logger.log.error(
+                "Failed to visualise phase because no active cameras were "
+                "found."
+            )
+            return
+        # Get the image data
+        phase = cockpit.gui.camera.window.getImageForCamera(camera)
+        if phase is None:
+            logger.log.error(
+                f"The camera view for camera '{camera.name}' contained no "
+                "image. Please capture an interferogram first."
+            )
+            return
+        # Select the ROI
+        with _ROISelect(self, phase) as dlg:
+            if dlg.ShowModal() == wx.ID_OK:
+                roi = dlg.GetROI()
+                userConfig.setValue(
+                    "dm_circleParams",
+                    (roi[1], roi[0], roi[2])
+                )
+            else:
+                logger.log.error(
+                    "ROI selection cancelled. Aborting phase visualisation..."
+                )
+                return
+        # Update device ROI and filter
         self._device.updateROI()
         self._device.checkFourierFilter()
-
-        phase, phase_unwrapped = self._device.acquireUnwrappedPhase()
-        phase_power_spectrum = _computePowerSpectrum(phase)
+        # Unwrap the phase and then subtract piston, tip, and tilt modes
+        phase_unwrapped = self._device.unwrap_phase(phase)
         phase_unwrapped_mptt = _computeUnwrappedPhaseMPTT(phase_unwrapped)
-
-        phase_unwrapped_MPTT_RMS_error = self._device.wavefrontRMSError(
-            phase_unwrapped_mptt
+        # Compute the RMS error of the adjusted unwrapped phase
+        true_flat = np.zeros(np.shape(phase_unwrapped_mptt))
+        mask = cockpit_device.aoAlg.mask
+        phase_unwrapped_MPTT_RMS_error = np.sqrt(
+            np.mean((true_flat[mask] - phase_unwrapped_mptt[mask]) ** 2)
         )
+        # Calculate the power spectrum
+        phase_power_spectrum = _computePowerSpectrum(phase)
 
         frame = _PhaseViewer(
             self,
             phase,
-            self._device.proxy.get_roi(),
+            (roi[1], roi[0], roi[2]),
             phase_unwrapped,
             phase_power_spectrum,
             phase_unwrapped_MPTT_RMS_error
         )
         frame.Show()
 
-    def OnCalibrate(self, event: wx.CommandEvent) -> None:
-        del event
-        self._device.calibrate()
+    def OnCalibrationParameters(self, event: wx.CommandEvent) -> None:
+        params = self._device.calibration_params
+
+        inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
+            self,
+            "Set calibration parameters",
+            [
+                "Minimum poking magnitude",
+                "Maximum poking magnitude",
+                "Number of poking steps per actuator"
+            ],
+            (
+                params["poke_min"],
+                params["poke_max"],
+                params["poke_steps"],
+            ),
+        )
+        params["poke_min"] = float(inputs[0])
+        params["poke_max"] = float(inputs[1])
+        params["poke_steps"] = int(inputs[2])
+
+    def OnCalibrationData(self, event: wx.CommandEvent) -> None:
+        self._device.calibrationGetData(self)
+
+    def OnCalibrationCalc(self, event: wx.CommandEvent) -> None:
+        # Navigate to the image file
+        file_path_image = None
+        with wx.FileDialog(
+            self,
+            message="Load calibration image stack",
+            wildcard="TIFF images (*.tif; *.tiff)|*.tif;*.tiff",
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
+        ) as file_dialog:
+            if file_dialog.ShowModal() != wx.ID_OK:
+                return
+            file_path_image = pathlib.Path(file_dialog.GetPath())
+
+        # Check if an accompanying JSON file exists
+        file_path_json = file_path_image.with_name(
+            file_path_image.stem + ".json"
+        )
+        if not file_path_json.exists():
+            logger.log.error(
+                "Couldn't find accompanying JSON file for image file "
+                f"{str(file_path_image)}."
+            )
+
+        # Load actuator values
+        actuator_values = []
+        with open(file_path_json, "r", encoding="utf-8") as fi:
+            actuator_values = np.array(json.load(fi))
+
+        # Define ROI
+        with _ROISelect(self, file_path_image) as dlg:
+            if dlg.ShowModal() == wx.ID_OK:
+                roi = dlg.GetROI()
+                userConfig.setValue(
+                    "dm_circleParams",
+                    (roi[1], roi[0], roi[2])
+                )
+            else:
+                logger.log.error(
+                    "ROI selection cancelled. Aborting calibration process..."
+                )
+                return
+
+        # Calculate control matrix
+        self._device.calculateControlMatrix(
+            actuator_values,
+            file_path_image
+        )
 
     def OnCharacterise(self, event: wx.CommandEvent) -> None:
         del event

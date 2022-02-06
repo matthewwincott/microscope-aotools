@@ -30,6 +30,9 @@ mirror as currently mounted on DeepSIM in Oxford.
 """
 import os
 import time
+import queue
+import pathlib
+import json
 
 import cockpit.devices
 import cockpit.devices.device
@@ -41,9 +44,13 @@ import wx
 from cockpit import events
 from cockpit.util import logger, userConfig
 import h5py
+import tifffile
 
 from microAO.events import *
 from microAO.gui.main import MicroscopeAOCompositeDevicePanel
+from microAO.aoAlg import AdaptiveOpticsFunctions
+
+aoAlg = AdaptiveOpticsFunctions()
 
 def _get_timestamped_log_path(prefix):
     dirname = wx.GetApp().Config["log"].getpath("dir")
@@ -122,6 +129,19 @@ def log_correction_applied(
                 print('Failed to write: {}'.format(datum[0]), e)
         
 
+def mask_circular(dims, radius=None, centre=None):
+    # Init radius and centre if necessary
+    if centre is None:
+        centre = (dims / 2).astype(int)
+    if radius is None:
+        # Largest circle that could fit in the dimensions
+        radius = min(centre, dims - centre)
+    # Create a meshgrid
+    meshgrid = np.meshgrid(np.arange(dims[0]), np.arange(dims[1]))
+    # Calculate distances from the centre element
+    dist = np.sqrt(((meshgrid - centre.reshape(-1, 1, 1)) ** 2).sum(axis=0))
+    # Return a binary mask for the specified radius
+    return dist <= radius
 
 class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
     def __init__(self, name: str, config={}) -> None:
@@ -155,6 +175,27 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Shared state for the new image callbacks during sensorless
         self.sensorless_data = {}
 
+        # Calibration parameters and data
+        self.calibration_params = {
+            "poke_min": 0.25,
+            "poke_max": 0.75,
+            "poke_steps": 5
+        }
+        self._calibration_data = {
+            "output_filename": "",
+            "running": False,
+            "iteration_index": 0,
+            "image_queue": queue.Queue(),
+            "actuator_patterns": []
+        }
+
+        # Handle abort events
+        self._abort = {
+            "calib_data": False,
+            "calib_calc": False
+        }
+        events.subscribe(events.USER_ABORT, self._on_abort)
+
         # Excercise the DM to remove residual static and then set to 0 position
         if self.config.get('exercise_on_startup', 'false').lower() in ['true', 't', 'yes', 'y', 1]:
             for _ in range(50):
@@ -181,6 +222,10 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             self.set_system_flat(sys_flat)
         except Exception:
             pass
+
+    def _on_abort(self):
+        for key in self._abort:
+            self._abort[key] = True
 
     def makeUI(self, parent):
         return MicroscopeAOCompositeDevicePanel(parent, self)
@@ -210,6 +255,9 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             except Exception:
                 raise e
 
+        # Update local aoAlg instance
+        aoAlg.make_mask(int(np.round(circle_parameters[2])))
+
     def checkFourierFilter(self):
         circle_parameters = userConfig.getValue("dm_circleParams")
         try:
@@ -224,6 +272,12 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 )
             except Exception:
                 raise e
+        # Update local aoAlg instance
+        aoAlg.make_fft_filter(
+            test_image,
+            window_dim=50,
+            mask_di=int((2 * circle_parameters[2]) * (3.0 / 16.0)),
+        )
 
     def checkIfCalibrated(self):
         try:
@@ -237,14 +291,198 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             except Exception:
                 raise e
 
-    def calibrate(self):
+    def calibrationGetData(self, parent):
+        # Select the camera which will be used to capture images
+        camera = self.getCamera()
+        if camera is None:
+            logger.log.error(
+                "Failed to start calibration because no active cameras were "
+                "found."
+            )
+            return
+        # Select the file to which the image stack will be written
+        default_directory = ""
+        if isinstance(self._calibration_data["output_filename"], pathlib.Path):
+            default_directory = self._calibration_data["output_filename"].parent
+        with wx.FileDialog(
+            parent,
+            message="Save calibration image stack",
+            defaultDir=default_directory,
+            wildcard="TIFF images (*.tif; *.tiff)|*.tif;*.tiff",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
+        ) as file_dialog:
+            if file_dialog.ShowModal() != wx.ID_OK:
+                return
+            self._calibration_data["output_filename"] = pathlib.Path(
+                file_dialog.GetPath()
+            )
+        # Generate actuator patterns
+        self._calibration_data["actuator_patterns"] = np.zeros(
+            (
+                self.no_actuators * self.calibration_params["poke_steps"],
+                self.no_actuators
+            )
+        ) + 0.5
+        pokeSteps = np.linspace(
+            self.calibration_params["poke_min"],
+            self.calibration_params["poke_max"],
+            self.calibration_params["poke_steps"]
+        )
+        for i in range(self.no_actuators):
+            for j in range(pokeSteps.shape[0]):
+                self._calibration_data["actuator_patterns"][
+                    (pokeSteps.shape[0] * i) + j, i
+                ] = pokeSteps[j]
+        # Start a saving thread
+        self._calibration_data["running"] = True
+        self._calibrationImageSaver()
+        # Subscribe to new image event
+        events.subscribe(
+            events.NEW_IMAGE % camera.name,
+            lambda image, _: self._calibrationOnImage(camera.name, image)
+        )
+        # Apply the first actuator pattern and wait for it to settle
+        self.send(self._calibration_data["actuator_patterns"][0])
+        time.sleep(0.1)
+        # Take the first image
+        wx.CallAfter(wx.GetApp().Imager.takeImage)
+
+    @cockpit.util.threads.callInNewThread
+    def _calibrationImageSaver(self):
+        with tifffile.TiffWriter(self._calibration_data["output_filename"]) as fo:
+            while self._calibration_data["running"]:
+                try:
+                    image = self._calibration_data["image_queue"].get(5)
+                    fo.write(image, contiguous=True)
+                except queue.Empty:
+                    continue
+            with self._calibration_data["output_filename"].with_name(
+                self._calibration_data["output_filename"].stem + ".json"
+            ).open("w", encoding="utf-8") as fo2:
+                json.dump(
+                    self._calibration_data["actuator_patterns"].tolist(),
+                    fo2,
+                    sort_keys=True,
+                    indent=4
+                )
+
+    def _calibrationOnImage(self, camera_name, image):
+        total_images = len(self._calibration_data["actuator_patterns"])
+        # Update status bar
+        events.publish(
+            events.UPDATE_STATUS_LIGHT,
+            "image count",
+            "AO calibration, data acquisition: image "
+            f"{self._calibration_data['iteration_index'] + 1}/{total_images}."
+        )
+        # Queue the image and increment the iteration index
+        self._calibration_data["image_queue"].put(image)
+        self._calibration_data["iteration_index"] += 1
+        if (
+            self._calibration_data["iteration_index"] < total_images
+            and not self._abort["calib_data"]
+        ):
+            # Apply new pattern, wait a bit, and then take another image
+            self.send(
+                self._calibration_data["actuator_patterns"][
+                    self._calibration_data["iteration_index"]
+                ]
+            )
+            time.sleep(0.1)
+            wx.CallAfter(wx.GetApp().Imager.takeImage)
+        else:
+            events.unsubscribe(
+                events.NEW_IMAGE % camera_name,
+                self._calibrationOnImage,
+            )
+            events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
+            self._calibration_data["iteration_index"] = 0
+            self._calibration_data["running"] = False
+            self._calibration_data["image_queue"].join()
+
+    def unwrap_phase(self, image):
+        # Crop the image if necessary
+        roi = self.proxy.get_roi()
+        image_cropped = np.zeros(
+            (roi[2] * 2, roi[2] * 2), dtype=float
+        )
+        image_cropped[:, :] = image[
+            roi[0] - roi[2] : roi[0] + roi[2],
+            roi[1] - roi[2] : roi[1] + roi[2],
+        ]
+        if np.any(aoAlg.mask) is None:
+            aoAlg.make_mask(self.roi[2])
+            image = image_cropped
+        else:
+            image = image_cropped * aoAlg.mask
+        # Unwrap the phase
+        return aoAlg.unwrap_interferometry(image)
+
+    @cockpit.util.threads.callInNewThread
+    def calculateControlMatrix(self, actuator_values, file_path_image):
         self.updateROI()
         self.checkFourierFilter()
-
-        controlMatrix = self.proxy.calibrate(numPokeSteps=5)
-        userConfig.setValue(
-            "dm_controlMatrix", np.ndarray.tolist(controlMatrix)
-        )
+        # Process images and calculate Zernike mode coefficients
+        zernike_coefficients = np.zeros_like(actuator_values)
+        with tifffile.TiffFile(file_path_image) as stack:
+            image_index = 0
+            for page in stack.pages:
+                # Check for abort requests
+                if self._abort["calib_calc"]:
+                    break
+                # Update the status bar
+                events.publish(
+                    events.UPDATE_STATUS_LIGHT,
+                    "image count",
+                    "AO calibration, control matrix calculation: image "
+                    f"{image_index + 1}/{actuator_values.shape[0]}."
+                )
+                # Get the image data
+                image = page.asarray()
+                # Phase unwrap
+                image_unwrapped = self.unwrap_phase(image)
+                # Check for discontinuities
+                image_unwrapped_diff = (
+                    abs(np.diff(np.diff(image_unwrapped, axis=1), axis=0))
+                    * mask_circular(
+                        np.array(image_unwrapped.shape),
+                        radius=min(image_unwrapped.shape) / 2 - 3
+                    )[:-1, :-1]
+                )
+                no_discontinuities = np.shape(
+                    np.where(image_unwrapped_diff > 2 * np.pi)
+                )[1]
+                if no_discontinuities > np.prod(image_unwrapped.shape) / 1000.0:
+                    logger.error(
+                        f"Unwrapped phase for image {image_index} contained "
+                        "discontinuites. Aborting calibration..."
+                    )
+                else:
+                    # Calculate Zernike coefficients
+                    zernike_coefficients[image_index] = aoAlg.get_zernike_modes(
+                        image_unwrapped,
+                        self.no_actuators
+                    )
+                # Increment the image index
+                image_index += 1
+        if not self._abort["calib_calc"]:
+            # Calculate the control matrix
+            control_matrix = aoAlg.create_control_matrix(
+                zernikeAmps=zernike_coefficients,
+                pokeSteps=actuator_values,
+                numActuators=self.no_actuators
+            )
+            # Save the matrix to the user config
+            userConfig.setValue(
+                "dm_controlMatrix", np.ndarray.tolist(control_matrix)
+            )
+            # Propagate the control matrix to the microscope device
+            self.proxy.set_controlMatrix(control_matrix)
+        else:
+            # Clear the flag
+            self._abort["calib_calc"] = False
+        # Clear status bar
+        events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
 
     def characterise(self):
         self.updateROI()
