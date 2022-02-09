@@ -270,14 +270,14 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                     window_dim=50,
                     mask_di=int((2 * circle_parameters[2]) * (3.0 / 16.0)),
                 )
+                # Update local aoAlg instance
+                aoAlg.make_fft_filter(
+                    test_image,
+                    window_dim=50,
+                    mask_di=int((2 * circle_parameters[2]) * (3.0 / 16.0)),
+                )
             except Exception:
                 raise e
-        # Update local aoAlg instance
-        aoAlg.make_fft_filter(
-            test_image,
-            window_dim=50,
-            mask_di=int((2 * circle_parameters[2]) * (3.0 / 16.0)),
-        )
 
     def checkIfCalibrated(self):
         try:
