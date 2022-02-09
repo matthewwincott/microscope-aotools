@@ -457,7 +457,7 @@ class _PhaseComparator(wx.Dialog):
         axes[1].set_title("Current phase map")
         fig.suptitle("Invert the current phase map?")
         fig.tight_layout()
-        self.canvas = FigureCanvas(self, wx.ID_ANY, fig)
+        canvas = FigureCanvas(self, wx.ID_ANY, fig)
         # Add yes and no buttons
         sizer_stdbuttons = wx.StdDialogButtonSizer()
         for button_id in (wx.ID_YES, wx.ID_NO):
@@ -466,7 +466,7 @@ class _PhaseComparator(wx.Dialog):
         sizer_stdbuttons.Realize()
         # Finalise the layout
         sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(self._canvas, 1, wx.SHAPED)
+        sizer.Add(canvas, 1, wx.SHAPED)
         sizer.Add(sizer_stdbuttons, 0, wx.ALL, 5)
         self.SetSizerAndFit(sizer)
 
