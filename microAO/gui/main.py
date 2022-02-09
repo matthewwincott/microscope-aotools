@@ -463,6 +463,8 @@ class _PhaseComparator(wx.Dialog):
         for button_id in (wx.ID_YES, wx.ID_NO):
             button = wx.Button(self, button_id)
             sizer_stdbuttons.Add(button)
+        self.SetAffirmativeId(wx.ID_YES)
+        self.SetEscapeId(wx.ID_NO)
         sizer_stdbuttons.Realize()
         # Finalise the layout
         sizer = wx.BoxSizer(wx.VERTICAL)
