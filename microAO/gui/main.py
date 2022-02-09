@@ -450,10 +450,11 @@ class _PhaseComparator(wx.Dialog):
         )
         # Plot and add the figure to a canvas
         fig, axes = matplotlib.pyplot.subplots(1, 2)
-        axes[0][0].imshow(phase_ref, cmap=self._DEFAULT_CMAP)
-        axes[0][0].set_title("Reference phase map")
-        axes[0][1].imshow(phase, cmap=self._DEFAULT_CMAP)
-        axes[0][1].set_title("Current phase map")
+        axes = axes.ravel()
+        axes[0].imshow(phase_ref, cmap=self._DEFAULT_CMAP)
+        axes[0].set_title("Reference phase map")
+        axes[1].imshow(phase, cmap=self._DEFAULT_CMAP)
+        axes[1].set_title("Current phase map")
         fig.suptitle("Invert the current phase map?")
         fig.tight_layout()
         self.canvas = FigureCanvas(self, wx.ID_ANY, fig)
@@ -660,7 +661,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         sizer_main.Add(tabs, wx.SizerFlags(1).Expand())
         self.SetSizer(sizer_main)
 
-    def _get_image_and_unwrap(self) -> tuple(np.ndarray, np.ndarray, tuple(int, int, int)):
+    def _get_image_and_unwrap(self) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int]]:
         # Select the camera whose window contains the interferogram
         camera = self._device.getCamera()
         if camera is None:
