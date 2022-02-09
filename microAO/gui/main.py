@@ -15,6 +15,7 @@ import wx
 from wx.lib.floatcanvas.FloatCanvas import FloatCanvas
 import wx.lib.floatcanvas.FCObjects as FCObjects
 
+import matplotlib.pyplot
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 
@@ -439,6 +440,35 @@ class _CharacterisationAssayViewer(wx.Frame):
             file_path = file_dialog.GetPath()
         np.save(file_path, self._assay)
 
+class _PhaseComparator(wx.Dialog):
+    _DEFAULT_CMAP = matplotlib.pyplot.cm.plasma
+    def __init__(self, parent, phase_ref, phase):
+        super().__init__(
+            parent,
+            title="Phase comparison",
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
+        )
+        # Plot and add the figure to a canvas
+        fig, axes = matplotlib.pyplot.subplots(1, 2)
+        axes[0][0].imshow(phase_ref, cmap=self._DEFAULT_CMAP)
+        axes[0][0].set_title("Reference phase map")
+        axes[0][1].imshow(phase, cmap=self._DEFAULT_CMAP)
+        axes[0][1].set_title("Current phase map")
+        fig.suptitle("Invert the current phase map?")
+        fig.tight_layout()
+        self.canvas = FigureCanvas(self, wx.ID_ANY, fig)
+        # Add yes and no buttons
+        sizer_stdbuttons = wx.StdDialogButtonSizer()
+        for button_id in (wx.ID_YES, wx.ID_NO):
+            button = wx.Button(self, button_id)
+            sizer_stdbuttons.Add(button)
+        sizer_stdbuttons.Realize()
+        # Finalise the layout
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self._canvas, 1, wx.SHAPED)
+        sizer.Add(sizer_stdbuttons, 0, wx.ALL, 5)
+        self.SetSizerAndFit(sizer)
+
 class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def __init__(self, parent, device):
         super().__init__(parent)
@@ -524,6 +554,10 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         sysFlatCalcButton = wx.Button(panel_calibration, label="Generate system flat")
         sysFlatCalcButton.Bind(wx.EVT_BUTTON, self.OnCalcSystemFlat)
 
+        # Button to apply offset between phases
+        phaseOffsetButton = wx.Button(panel_calibration, label="Apply phase offset")
+        phaseOffsetButton.Bind(wx.EVT_BUTTON, self.OnPhaseOffset)
+
         # Reset the DM actuators
         resetButton = wx.Button(panel_AO, label="Reset DM")
         resetButton.Bind(wx.EVT_BUTTON, self.OnResetDM)
@@ -579,7 +613,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             calibrationCalcButton,
             characteriseButton,
             sysFlatParametersButton,
-            sysFlatCalcButton
+            sysFlatCalcButton,
+            phaseOffsetButton
         ]:
             sizer_calibration.Add(btn, panel_flags)
 
@@ -625,7 +660,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         sizer_main.Add(tabs, wx.SizerFlags(1).Expand())
         self.SetSizer(sizer_main)
 
-    def OnVisualisePhase(self, event: wx.CommandEvent) -> None:
+    def _get_image_and_unwrap(self) -> tuple(np.ndarray, np.ndarray, tuple(int, int, int)):
         # Select the camera whose window contains the interferogram
         camera = self._device.getCamera()
         if camera is None:
@@ -658,8 +693,16 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         # Update device ROI and filter
         self._device.updateROI()
         self._device.checkFourierFilter()
-        # Unwrap the phase and then subtract piston, tip, and tilt modes
-        phase_unwrapped = self._device.unwrap_phase(phase)
+        # Unwrap the phase image
+        return (phase, self._device.unwrap_phase(phase), (roi[1], roi[0], roi[2]))
+
+    def OnVisualisePhase(self, event: wx.CommandEvent) -> None:
+        phase, phase_unwrapped, roi = self._get_image_and_unwrap()
+        if phase_unwrapped is None:
+            # All the logging has already been done in the
+            # _get_image_and_unwrap() method
+            return
+        # Subtract piston, tip, and tilt modes
         phase_unwrapped_mptt = _computeUnwrappedPhaseMPTT(phase_unwrapped)
         # Compute the RMS error of the adjusted unwrapped phase
         true_flat = np.zeros(np.shape(phase_unwrapped_mptt))
@@ -766,6 +809,34 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             "Zernike modes amplitudes corrected:\n %s", best_z_amps_corrected
         )
         logger.log.debug("System flat actuator values:\n%s", sys_flat_values)
+
+    def OnPhaseOffset(self, event: wx.CommandEvent) -> None:
+        _, phase_unwrapped, _ = self._get_image_and_unwrap()
+        # Naviage to the phase data file used as reference
+        file_path_phasedata = None
+        with wx.FileDialog(
+            self,
+            message="Load phase data file",
+            wildcard="Numpy file (*.npy)|*.npy",
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
+        ) as file_dialog:
+            if file_dialog.ShowModal() != wx.ID_OK:
+                return
+            file_path_phasedata = pathlib.Path(file_dialog.GetPath())
+        # Get the unwrapped phase
+        phasedata = np.load(file_path_phasedata, allow_pickle=True)
+        phase_unwrapped_ref = phasedata.item()["phase_unwrapped"]
+        # Ask if the new phase needs to be inverted
+        phase_sign = 1
+        with _PhaseComparator(self, phase_unwrapped_ref, phase_unwrapped) as dlg:
+            if dlg.ShowModal() == wx.ID_OK:
+                phase_sign = -1
+        # Calculate the difference
+        phase_unwrapped_difference = (
+            phase_sign * phase_unwrapped - phase_unwrapped_ref
+        )
+        # Set the phase difference map
+        self._device.set_phase_map(phase_unwrapped_difference)
 
     def OnResetDM(self, event: wx.CommandEvent) -> None:
         del event

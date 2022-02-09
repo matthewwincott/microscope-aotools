@@ -891,3 +891,12 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Get last corrections and publish
         corrections_applied  = self.proxy.get_last_corrections()
         events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
+
+    def set_phase_map(self, phase_map):
+        # Convert the phase map to zernike coefficients
+        zernike_coeff = aoAlg.get_zernike_modes(
+            phase_map,
+            self.no_actuators
+        )
+        # Apply the zernike coefficients
+        self.set_phase(zernike_coeff)
