@@ -335,6 +335,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 ] = pokeSteps[j]
         # Start a saving thread
         self._calibration_data["running"] = True
+        self._calibration_data["iteration_index"] = 0
         self._calibrationImageSaver()
         # Subscribe to new image event
         events.subscribe(
@@ -356,28 +357,32 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                     fo.write(image, contiguous=True)
                 except queue.Empty:
                     continue
-            with self._calibration_data["output_filename"].with_name(
-                self._calibration_data["output_filename"].stem + ".json"
-            ).open("w", encoding="utf-8") as fo2:
-                json.dump(
-                    self._calibration_data["actuator_patterns"].tolist(),
-                    fo2,
-                    sort_keys=True,
-                    indent=4
-                )
+        with self._calibration_data["output_filename"].with_name(
+            self._calibration_data["output_filename"].stem + ".json"
+        ).open("w", encoding="utf-8") as fo:
+            json.dump(
+                self._calibration_data["actuator_patterns"].tolist(),
+                fo,
+                sort_keys=True,
+                indent=4
+            )
 
     def _calibrationOnImage(self, camera_name, image):
-        total_images = len(self._calibration_data["actuator_patterns"])
-        # Update status bar
-        events.publish(
-            events.UPDATE_STATUS_LIGHT,
-            "image count",
-            "AO calibration, data acquisition: image "
-            f"{self._calibration_data['iteration_index'] + 1}/{total_images}."
-        )
-        # Queue the image and increment the iteration index
-        self._calibration_data["image_queue"].put(image)
+        # Put image on the queue and update the statue bar if there is no abort
+        # request
+        if not self._abort["calib_data"]:
+            self._calibration_data["image_queue"].put(image)
+            events.publish(
+                events.UPDATE_STATUS_LIGHT,
+                "image count",
+                "AO calibration, data acquisition: image "
+                f"{self._calibration_data['iteration_index'] + 1}/"
+                f"{total_images}."
+            )
+        # Update the iteration counter
         self._calibration_data["iteration_index"] += 1
+        # Decide to continue or to exit
+        total_images = len(self._calibration_data["actuator_patterns"])
         if (
             self._calibration_data["iteration_index"] < total_images
             and not self._abort["calib_data"]
@@ -396,8 +401,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 self._calibrationOnImage,
             )
             events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
-            self._calibration_data["iteration_index"] = 0
             self._calibration_data["running"] = False
+            self._abort["calib_data"] = False
             self._calibration_data["image_queue"].join()
 
     def unwrap_phase(self, image):
@@ -892,6 +897,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         corrections_applied  = self.proxy.get_last_corrections()
         events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
 
+        return actuator_values, corrections_applied
+
     def set_phase_map(self, phase_map):
         # Convert the phase map to zernike coefficients
         zernike_coeff = aoAlg.get_zernike_modes(
@@ -899,4 +906,4 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             self.no_actuators
         )
         # Apply the zernike coefficients
-        self.set_phase(zernike_coeff)
+        return self.set_phase(zernike_coeff)

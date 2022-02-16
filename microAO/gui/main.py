@@ -46,17 +46,27 @@ def _np_grey_img_to_wx_image(np_img: np.ndarray) -> wx.Image:
     )
     return wx_img
 
-
-def _computeUnwrappedPhaseMPTT(unwrapped_phase):
+def _subtractModesFromUnwrappedPhase(unwrapped_phase, modes=(0, 1, 2)):
     # XXX: AdaptiveOpticsDevice.getzernikemodes method does not
     # actually make use of its instance.  It should have been a free
     # function or at least a class method.  Using it like this means
     # we can compute it client-side instead of having send the data.
     # This should be changed in microscope-aotools.
-    z_amps = AdaptiveOpticsDevice.getzernikemodes(None, unwrapped_phase, 3)
-    phase = aotools.phaseFromZernikes(z_amps[0:3], unwrapped_phase.shape[0])
-    return unwrapped_phase - phase
-
+    #
+    # Get the Zernike modes of the phase map, up to the largest requested
+    z_amps = AdaptiveOpticsDevice.getzernikemodes(
+        None,
+        unwrapped_phase,
+        max(modes) + 1
+    )
+    # Suppress the modes which are not required
+    for i in range(len(z_amps)):
+        if i not in modes:
+            z_amps[i] = 0
+    # Convert the modes to a phase map
+    phase_modes = aotools.phaseFromZernikes(z_amps, unwrapped_phase.shape[0])
+    # Subtract the modes' phase from the unwrapped phase
+    return unwrapped_phase - phase_modes
 
 def _computePowerSpectrum(interferogram):
     interferogram_ft = np.fft.fftshift(np.fft.fft2(interferogram))
@@ -706,7 +716,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             # _get_image_and_unwrap() method
             return
         # Subtract piston, tip, and tilt modes
-        phase_unwrapped_mptt = _computeUnwrappedPhaseMPTT(phase_unwrapped)
+        phase_unwrapped_mptt = _subtractModesFromUnwrappedPhase(phase_unwrapped)
         # Compute the RMS error of the adjusted unwrapped phase
         true_flat = np.zeros(np.shape(phase_unwrapped_mptt))
         mask = cockpit_device.aoAlg.mask
@@ -814,9 +824,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         logger.log.debug("System flat actuator values:\n%s", sys_flat_values)
 
     def OnPhaseOffset(self, event: wx.CommandEvent) -> None:
-        _, phase_unwrapped, _ = self._get_image_and_unwrap()
         # Naviage to the phase data file used as reference
-        file_path_phasedata = None
+        file_path_input = None
         with wx.FileDialog(
             self,
             message="Load phase data file",
@@ -825,21 +834,63 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         ) as file_dialog:
             if file_dialog.ShowModal() != wx.ID_OK:
                 return
-            file_path_phasedata = pathlib.Path(file_dialog.GetPath())
-        # Get the unwrapped phase
-        phasedata = np.load(file_path_phasedata, allow_pickle=True)
+            file_path_input = pathlib.Path(file_dialog.GetPath())
+        # Specify the location and base filename for the outputs
+        file_path_outputs = None
+        with wx.FileDialog(
+            self,
+            message="Save output files",
+            wildcard="Numpy file (*.npy)|*.npy",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
+        ) as file_dialog:
+            if file_dialog.ShowModal() != wx.ID_OK:
+                return
+            file_path_outputs = pathlib.Path(file_dialog.GetPath())
+        # Get the current unwrapped phase
+        _, phase_unwrapped, _ = self._get_image_and_unwrap()
+        # Load the reference unwrapped phase
+        phasedata = np.load(file_path_input, allow_pickle=True)
         phase_unwrapped_ref = phasedata.item()["phase_unwrapped"]
         # Ask if the new phase needs to be inverted
         phase_sign = 1
         with _PhaseComparator(self, phase_unwrapped_ref, phase_unwrapped) as dlg:
             if dlg.ShowModal() == wx.ID_OK:
                 phase_sign = -1
+        # Subtract piston modes
+        phase_unwrapped = _subtractModesFromUnwrappedPhase(
+            phase_unwrapped,
+            (0,)
+        )
+        phase_unwrapped_ref = _subtractModesFromUnwrappedPhase(
+            phase_unwrapped_ref,
+            (0,)
+        )
         # Calculate the difference
         phase_unwrapped_difference = (
             phase_sign * phase_unwrapped - phase_unwrapped_ref
         )
         # Set the phase difference map
-        self._device.set_phase_map(phase_unwrapped_difference)
+        actuators, _ = self._device.set_phase_map(
+            -1.0 * phase_unwrapped_difference
+        )
+        # Derive names for all the output files
+        file_path_phase = file_path_outputs.with_name(
+            file_path_outputs.stem + "_phase.npy"
+        )
+        file_path_phase_ref = file_path_outputs.with_name(
+            file_path_outputs.stem + "_phase-reference.npy"
+        )
+        file_path_phase_diff = file_path_outputs.with_name(
+            file_path_outputs.stem + "_phase-difference.npy"
+        )
+        file_path_actuators = file_path_outputs.with_name(
+            file_path_outputs.stem + "_actuators.npy"
+        )
+        # Write the output files
+        np.save(file_path_phase, phase_sign * phase_unwrapped)
+        np.save(file_path_phase_ref, phase_unwrapped_ref)
+        np.save(file_path_phase_diff, phase_unwrapped_difference)
+        np.save(file_path_actuators, actuators)
 
     def OnResetDM(self, event: wx.CommandEvent) -> None:
         del event
