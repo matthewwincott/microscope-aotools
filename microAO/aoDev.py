@@ -71,16 +71,6 @@ class AdaptiveOpticsDevice(Device):
     This class requires an adaptive element and a camera.
     Everything else is generated on or after __init__"""
 
-    _CockpitTriggerType_to_TriggerType = {
-        "SOFTWARE": TriggerType.SOFTWARE,
-        "RISING_EDGE": TriggerType.RISING_EDGE,
-        "FALLING_EDGE": TriggerType.FALLING_EDGE,
-    }
-
-    _CockpitTriggerModes_to_TriggerModes = {
-        "ONCE": TriggerMode.ONCE,
-        "START": TriggerMode.START,
-    }
 
     def __init__(
         self, ao_element_uri, wavefront_uri=None, slm_uri=None, control_matrix=None, system_flat=None, **kwargs
@@ -112,7 +102,7 @@ class AdaptiveOpticsDevice(Device):
             self.slm = Pyro4.Proxy(
                 "PYRO:%s@%s:%d" % (slm_uri[0], slm_uri[1], slm_uri[2])
             )
-        # self.ao_element.set_trigger(TriggerType.RISING_EDGE) #Set trigger type to rising edge
+
         self.numActuators = self.ao_element.n_actuators
         # Region of interest (i.e. pupil offset and radius) on camera.
         self.roi = None
@@ -140,7 +130,7 @@ class AdaptiveOpticsDevice(Device):
         else:
             self.set_system_flat(np.zeros(self.numActuators) + 0.5)
         # Last set corrections
-        self.last_corrections = None
+        self.last_corrections = {}
         # Last applied zenrike  modes
         self.last_zernike_modes = None
         # Last applied actuators values
@@ -266,13 +256,11 @@ class AdaptiveOpticsDevice(Device):
         self.slm.set_custom_sequence(wavelength, [pattern, pattern])
 
     @Pyro4.expose
-    def set_trigger(self, cp_ttype, cp_tmode):
-        ttype = self._CockpitTriggerType_to_TriggerType[cp_ttype]
-        tmode = self._CockpitTriggerModes_to_TriggerModes[cp_tmode]
+    def set_trigger(self, ttype, tmode):
         self.ao_element.set_trigger(ttype, tmode)
 
-        self.last_trigger_type = cp_ttype
-        self.last_trigger_mode = cp_tmode
+        self.last_trigger_type = ttype
+        self.last_trigger_mode = tmode
 
     @Pyro4.expose
     def get_trigger(self):
@@ -378,7 +366,7 @@ class AdaptiveOpticsDevice(Device):
 
         ttype, tmode = self.get_trigger()
         if ttype != "SOFTWARE":
-            self.set_trigger(cp_ttype="SOFTWARE", cp_tmode="ONCE")
+            self.set_trigger(TriggerType.SOFTWARE, TriggerMode.ONCE)
             ttype, tmode = self.get_trigger()
 
         # Need to normalise patterns because general DM class expects 0-1 values
@@ -392,7 +380,7 @@ class AdaptiveOpticsDevice(Device):
 
         self.last_actuator_values = values
         if (ttype, tmode) is not self.get_trigger():
-            self.set_trigger(cp_ttype=ttype, cp_tmode=tmode)
+            self.set_trigger(ttype, tmode)
 
     # This method is for AO elements such as SLMs where the phase shape can be applied directly by sending an image of
     # the desired phase.
@@ -437,7 +425,7 @@ class AdaptiveOpticsDevice(Device):
 
         ttype, tmode = self.get_trigger()
         if ttype != "RISING_EDGE":
-            self.set_trigger(cp_ttype="RISING_EDGE", cp_tmode="ONCE")
+            self.set_trigger(TriggerType.RISING_EDGE, TriggerMode.ONCE)
 
         # Need to normalise patterns because general DM class expects 0-1 values
         patterns[patterns > 1.0] = 1.0
@@ -450,7 +438,7 @@ class AdaptiveOpticsDevice(Device):
 
         self.last_actuator_patterns = patterns
         if (ttype, tmode) is not self.get_trigger():
-            self.set_trigger(cp_ttype=ttype, cp_tmode=tmode)
+            self.set_trigger(ttype, tmode)
 
     @Pyro4.expose
     def get_last_actuator_patterns(self):
