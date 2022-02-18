@@ -450,38 +450,6 @@ class _CharacterisationAssayViewer(wx.Frame):
             file_path = file_dialog.GetPath()
         np.save(file_path, self._assay)
 
-class _PhaseComparator(wx.Dialog):
-    _DEFAULT_CMAP = matplotlib.pyplot.cm.plasma
-    def __init__(self, parent, phase_ref, phase):
-        super().__init__(
-            parent,
-            title="Phase comparison",
-            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
-        )
-        # Plot and add the figure to a canvas
-        fig, axes = matplotlib.pyplot.subplots(1, 2)
-        axes = axes.ravel()
-        axes[0].imshow(phase_ref, cmap=self._DEFAULT_CMAP)
-        axes[0].set_title("Reference phase map")
-        axes[1].imshow(phase, cmap=self._DEFAULT_CMAP)
-        axes[1].set_title("Current phase map")
-        fig.suptitle("Invert the current phase map?")
-        fig.tight_layout()
-        canvas = FigureCanvas(self, wx.ID_ANY, fig)
-        # Add yes and no buttons
-        sizer_stdbuttons = wx.StdDialogButtonSizer()
-        for button_id in (wx.ID_YES, wx.ID_NO):
-            button = wx.Button(self, button_id)
-            sizer_stdbuttons.Add(button)
-        self.SetAffirmativeId(wx.ID_YES)
-        self.SetEscapeId(wx.ID_NO)
-        sizer_stdbuttons.Realize()
-        # Finalise the layout
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(canvas, 1, wx.SHAPED)
-        sizer.Add(sizer_stdbuttons, 0, wx.ALL, 5)
-        self.SetSizerAndFit(sizer)
-
 class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def __init__(self, parent, device):
         super().__init__(parent)
@@ -851,11 +819,6 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         # Load the reference unwrapped phase
         phasedata = np.load(file_path_input, allow_pickle=True)
         phase_unwrapped_ref = phasedata.item()["phase_unwrapped"]
-        # Ask if the new phase needs to be inverted
-        phase_sign = 1
-        with _PhaseComparator(self, phase_unwrapped_ref, phase_unwrapped) as dlg:
-            if dlg.ShowModal() == wx.ID_OK:
-                phase_sign = -1
         # Subtract piston modes
         phase_unwrapped = _subtractModesFromUnwrappedPhase(
             phase_unwrapped,
@@ -867,7 +830,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         )
         # Calculate the difference
         phase_unwrapped_difference = (
-            phase_sign * phase_unwrapped - phase_unwrapped_ref
+            phase_unwrapped - phase_unwrapped_ref
         )
         # Set the phase difference map
         actuators, _ = self._device.set_phase_map(
@@ -887,7 +850,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             file_path_outputs.stem + "_actuators.npy"
         )
         # Write the output files
-        np.save(file_path_phase, phase_sign * phase_unwrapped)
+        np.save(file_path_phase, phase_unwrapped)
         np.save(file_path_phase_ref, phase_unwrapped_ref)
         np.save(file_path_phase_diff, phase_unwrapped_difference)
         np.save(file_path_actuators, actuators)

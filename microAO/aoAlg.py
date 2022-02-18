@@ -155,7 +155,7 @@ class AdaptiveOpticsFunctions():
         fftarray[find_cent[1]-region:find_cent[1]+region,find_cent[0]-region:find_cent[0]+region]=0.00001+0j
 
         # Find approximate position of first order point
-        test_point = np.argmax(fftarray)
+        test_point = np.argmax(fftarray[:fftarray.shape[0] // 2, :])
         test_point = [int(test_point % fftarray.shape[1]), int(test_point / fftarray.shape[1])]
 
         # Find first order point
