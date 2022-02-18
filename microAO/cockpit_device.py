@@ -368,6 +368,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             )
 
     def _calibrationOnImage(self, camera_name, image):
+        total_images = len(self._calibration_data["actuator_patterns"])
         # Put image on the queue and update the statue bar if there is no abort
         # request
         if not self._abort["calib_data"]:
@@ -382,7 +383,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Update the iteration counter
         self._calibration_data["iteration_index"] += 1
         # Decide to continue or to exit
-        total_images = len(self._calibration_data["actuator_patterns"])
         if (
             self._calibration_data["iteration_index"] < total_images
             and not self._abort["calib_data"]
