@@ -271,8 +271,19 @@ class _PhaseViewer(wx.Frame):
     """This is a window for visualising a phase map."""
 
     _INITIAL_IMAGE_HEIGHT = 512
+    _DEFAULT_CMAP = "rainbow"
 
-    def __init__(self, parent, phase, phase_roi, phase_unwrapped, phase_power_spectrum, phase_unwrapped_MPTT_RMS_error, *args, **kwargs):
+    def __init__(
+        self,
+        parent,
+        phase,
+        phase_roi,
+        phase_unwrapped,
+        phase_power_spectrum,
+        phase_unwrapped_MPTT_RMS_error,
+        *args,
+        **kwargs
+    ):
         super().__init__(parent, title="Phase View")
         self._panel = wx.Panel(self, *args, **kwargs)
 
@@ -281,62 +292,58 @@ class _PhaseViewer(wx.Frame):
             "phase": phase,
             "phase_roi": phase_roi,
             "phase_unwrapped": phase_unwrapped,
-            "phase_unwrapped_MPTT_RMS_error": phase_unwrapped_MPTT_RMS_error
+            "phase_power_spectrum": phase_power_spectrum,
+            "phase_unwrapped_MPTT_RMS_error": phase_unwrapped_MPTT_RMS_error,
         }
 
-        self._img_real = _np_grey_img_to_wx_image(phase_unwrapped)
-        self._img_fourier = _np_grey_img_to_wx_image(phase_power_spectrum)
-
-        self._canvas = FloatCanvas(
-            self._panel,
-            size=wx.Size(
-                self._INITIAL_IMAGE_HEIGHT,
-                self._INITIAL_IMAGE_HEIGHT
-            )
+        fig, self._axes = matplotlib.pyplot.subplots()
+        self._axes_image = self._axes.imshow(
+            phase_unwrapped, cmap=self._DEFAULT_CMAP
         )
-        self._canvas.Bind(wx.EVT_SIZE, self._OnSize)
-
-        self._canvas_bmp_real = self._canvas.AddObject(
-            FCObjects.ScaledBitmap(
-                self._img_real,
-                (0, 0),
-                self._INITIAL_IMAGE_HEIGHT,
-                Position="cc"
-            )
+        self._axes.set_xticks([])
+        self._axes.set_yticks([])
+        self._axes.set_frame_on(False)
+        self._cbar = matplotlib.pyplot.colorbar(
+            self._axes_image, ax=self._axes
         )
-        self._canvas_bmp_fourier = self._canvas.AddObject(
-            FCObjects.ScaledBitmap(
-                self._img_fourier,
-                (0, 0),
-                self._INITIAL_IMAGE_HEIGHT,
-                Position="cc"
-            )
+        fig.tight_layout()
+        self._canvas = FigureCanvas(self._panel, wx.ID_ANY, fig)
+
+        # Create a choice widget for selection of colormap
+        self._cmap_choice = wx.Choice(
+            self._panel, choices=matplotlib.pyplot.colormaps()
         )
+        self._cmap_choice.SetSelection(
+            matplotlib.pyplot.colormaps().index(self._DEFAULT_CMAP)
+        )
+        self._cmap_choice.Bind(wx.EVT_CHOICE, self._OnCmapChoice)
 
-        # By default, show real and hide the fourier transform.
-        self._canvas_bmp_fourier.Hide()
-
-        self._button_fourier = wx.ToggleButton(self._panel, label="Show Fourier")
-        self._button_fourier.Bind(wx.EVT_TOGGLEBUTTON, self._OnToggleFourier)
+        button_fourier = wx.ToggleButton(self._panel, label="Show Fourier")
+        button_fourier.Bind(wx.EVT_TOGGLEBUTTON, self._OnToggleFourier)
 
         button_save = wx.Button(self._panel, label="Save data")
         button_save.Bind(wx.EVT_BUTTON, self._OnButtonSave)
 
         self._rms_txt = wx.StaticText(
-            self._panel, label="RMS error without piston, tip, and tilt modes: %.05f" % (phase_unwrapped_MPTT_RMS_error)
+            self._panel,
+            label="RMS error without piston, tip, and tilt modes: %.05f"
+            % (phase_unwrapped_MPTT_RMS_error),
         )
 
         panel_sizer = wx.BoxSizer(wx.VERTICAL)
         panel_sizer.Add(self._canvas, 1, wx.SHAPED)
 
-        bottom_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        bottom_sizer.Add(
-            self._button_fourier,
-            wx.SizerFlags().Center().Border()
+        bottom_sizer_1 = wx.BoxSizer(wx.HORIZONTAL)
+        bottom_sizer_1.Add(button_fourier, wx.SizerFlags().Center().Border())
+        bottom_sizer_1.Add(button_save, wx.SizerFlags().Center().Border())
+        bottom_sizer_1.Add(
+            self._cmap_choice, wx.SizerFlags().Center().Border()
         )
-        bottom_sizer.Add(button_save, wx.SizerFlags().Center().Border())
-        bottom_sizer.Add(self._rms_txt, wx.SizerFlags().Center().Border())
-        panel_sizer.Add(bottom_sizer, 0, wx.EXPAND)
+        panel_sizer.Add(bottom_sizer_1, 0, wx.EXPAND)
+
+        bottom_sizer_2 = wx.BoxSizer(wx.HORIZONTAL)
+        bottom_sizer_2.Add(self._rms_txt, wx.SizerFlags().Center().Border())
+        panel_sizer.Add(bottom_sizer_2, 0, wx.EXPAND)
 
         self._panel.SetSizer(panel_sizer)
 
@@ -345,17 +352,20 @@ class _PhaseViewer(wx.Frame):
         self.SetSizerAndFit(frame_sizer)
 
     def _OnToggleFourier(self, event: wx.CommandEvent) -> None:
-        show_fourier = self._button_fourier.GetValue()
-        # These bmp are wx.lib.floatcanvas.FCObjects.Bitmap and not
-        # wx.Bitmap.  Their Show method does not take show argument
-        # and therefore we can't do `Show(show_fourier)`.
-        if show_fourier:
-            self._canvas_bmp_fourier.Show()
-            self._canvas_bmp_real.Hide()
+        cmap = self._cmap_choice.GetString(self._cmap_choice.GetSelection())
+        if event.GetEventObject().GetValue():
+            # Show fourier spectrum
+            self._axes_image = self._axes.imshow(
+                self._data["phase_power_spectrum"], cmap=cmap
+            )
         else:
-            self._canvas_bmp_real.Show()
-            self._canvas_bmp_fourier.Hide()
-        self._canvas.Draw(Force=True)
+            # Show phase map
+            self._axes_image = self._axes.imshow(
+                self._data["phase_unwrapped"], cmap=cmap
+            )
+        self._cbar.update_normal(self._axes_image)
+        self._cbar.update_ticks()
+        self._canvas.draw()
 
     def _OnButtonSave(self, event: wx.CommandEvent) -> None:
         file_path = ""
@@ -370,30 +380,10 @@ class _PhaseViewer(wx.Frame):
             file_path = file_dialog.GetPath()
         np.save(file_path, self._data)
 
-    def _OnSize(self, event: wx.SizeEvent):
-        new_canvas_height = event.GetSize()[1]
-        # Re-add the bitmaps
-        self._canvas.RemoveObject(self._canvas_bmp_real)
-        self._canvas_bmp_real = self._canvas.AddObject(
-            FCObjects.ScaledBitmap(
-                self._img_real,
-                (0, 0),
-                new_canvas_height,
-                Position="cc"
-            )
-        )
-        self._canvas.RemoveObject(self._canvas_bmp_fourier)
-        self._canvas_bmp_fourier = self._canvas.AddObject(
-            FCObjects.ScaledBitmap(
-                self._img_fourier,
-                (0, 0),
-                new_canvas_height,
-                Position="cc"
-            )
-        )
-        self._OnToggleFourier(wx.CommandEvent())
-        # Let the FloatCanvas handle the event too
-        event.Skip()
+    def _OnCmapChoice(self, event: wx.CommandEvent):
+        self._axes_image.set_cmap(event.GetString())
+        self._cbar.update_normal(self._axes_image)
+        self._canvas.draw()
 
 class _CharacterisationAssayViewer(wx.Frame):
     def __init__(self, parent, characterisation_assay):
