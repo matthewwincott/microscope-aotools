@@ -776,7 +776,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 "There are no available imagers.", caption="No imagers"
             )
         elif len(imagers) == 1:
-            imagers = imagers[0]
+            imager = imagers[0]
         else:
             imagers_dict = dict([(imager.name, imager) for imager in imagers])
 
