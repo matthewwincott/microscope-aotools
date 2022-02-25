@@ -109,25 +109,37 @@ class RemoteZ():
             # Return sensorless params to previous
             self._device.sensorless_parms = params_prev
 
-    def zstack(self, zmin, zmax, zstepsize):     
-        zsteps = int((zmax - zmin) // zstepsize)
-        zpositions = np.linspace(zmin, zmin + zstepsize * zsteps, zsteps)
+    def zstack(self, zmin, zmax, zstepsize, camera=None, imager=None):
+        zpositions = np.linspace(
+            zmin,
+            zmax,
+            int(np.ceil((zmax - zmin) / zstepsize))
+        )
 
-        camera = self._device.getCamera()
-        imager = self._device.getImager()
+        if camera is None:
+            camera = self._device.getCamera()
+        if imager is None:
+            imager = self._device.getImager()
 
         if camera is None or imager is None:
+            logger.log.info(
+                f"Aborting because no camera or imager found. Camera: {camera}"
+                f". Imager: {imager}."
+            )
             return
 
         images = []
 
-        for i, z in enumerate(zpositions):
+        for z in zpositions:
             # Move in remote z
             self.set_z(z)
 
             # Capture image
             im = self._device.captureImage(camera, imager)
             images.append(im)
+
+        # Go back to the zero position
+        self.set_z(0)
 
         return images
 
