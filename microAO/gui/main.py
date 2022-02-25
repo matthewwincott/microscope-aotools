@@ -285,6 +285,7 @@ class _PhaseViewer(wx.Frame):
         **kwargs
     ):
         super().__init__(parent, title="Phase View")
+        self.Bind(wx.EVT_CLOSE, self._OnClose)
         self._panel = wx.Panel(self, *args, **kwargs)
 
         # Store the important data
@@ -350,6 +351,12 @@ class _PhaseViewer(wx.Frame):
         frame_sizer = wx.BoxSizer(wx.VERTICAL)
         frame_sizer.Add(self._panel, 1, wx.EXPAND)
         self.SetSizerAndFit(frame_sizer)
+
+    def _OnClose(self, event: wx.CloseEvent) -> None:
+        # Make sure the figure has been closed
+        matplotlib.pyplot.close(self._axes.get_figure())
+        # Allow other handlers to process the event
+        event.Skip(True)
 
     def _OnToggleFourier(self, event: wx.CommandEvent) -> None:
         cmap = self._cmap_choice.GetString(self._cmap_choice.GetSelection())
