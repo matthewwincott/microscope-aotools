@@ -180,7 +180,7 @@ class RemoteZ():
 
                     self.z_lookup[datatype].append(np.poly1d(coef)) 
 
-    def set_z(self, z, datatype="zernike"):
+    def set_z(self, z, datatype="actuator"):
         try:
             if datatype == "zernike":
                 values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_modes)])
