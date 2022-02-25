@@ -833,6 +833,12 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         actuators, _ = self._device.set_phase_map(
             -1.0 * phase_unwrapped_difference
         )
+        # Check what the new phase looks like
+        _, phase_unwrapped_result, _ = self._get_image_and_unwrap()
+        phase_unwrapped_result = _subtractModesFromUnwrappedPhase(
+            phase_unwrapped_result,
+            (0,)
+        )
         # Derive names for all the output files
         file_path_phase = file_path_outputs.with_name(
             file_path_outputs.stem + "_phase.npy"
@@ -843,14 +849,50 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         file_path_phase_diff = file_path_outputs.with_name(
             file_path_outputs.stem + "_phase-difference.npy"
         )
+        file_path_phase_result = file_path_outputs.with_name(
+            file_path_outputs.stem + "_phase-result.npy"
+        )
         file_path_actuators = file_path_outputs.with_name(
-            file_path_outputs.stem + "_actuators.npy"
+            file_path_outputs.stem + "_actuators.txt"
         )
         # Write the output files
         np.save(file_path_phase, phase_unwrapped)
         np.save(file_path_phase_ref, phase_unwrapped_ref)
         np.save(file_path_phase_diff, phase_unwrapped_difference)
-        np.save(file_path_actuators, actuators)
+        np.save(file_path_phase_result, phase_unwrapped_result)
+        np.savetxt(file_path_actuators, actuators)
+        # Plot
+        fig, axes = matplotlib.pyplot.subplots(2, 2, figsize=(8.5, 7.3))
+        axes = axes.ravel()
+        for i, (img, title) in enumerate(
+            (
+                (
+                    phase_unwrapped_ref,
+                    "Reference phase without piston"
+                ),
+                (
+                    phase_unwrapped,
+                    "Current phase without piston"
+                ),
+                (
+                    phase_unwrapped_difference,
+                    "Difference between current\nand reference phases"
+                ),
+                (
+                    phase_unwrapped_result,
+                    "Current phase without piston,\n"
+                    "after applying the inverse of the difference"
+                )
+            )
+        ):
+            axes_image = axes[i].imshow(img)
+            axes[i].set_title(title)
+            axes[i].set_xticks([])
+            axes[i].set_yticks([])
+            axes[i].set_frame_on(False)
+            matplotlib.pyplot.colorbar(axes_image, ax=axes[i])
+        fig.tight_layout()
+        fig.show()
 
     def OnResetDM(self, event: wx.CommandEvent) -> None:
         del event
