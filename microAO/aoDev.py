@@ -24,6 +24,7 @@ import functools
 import numpy as np
 import Pyro4
 import time
+import logging
 import aotools
 from microAO.aoAlg import AdaptiveOpticsFunctions
 
@@ -34,7 +35,6 @@ from microscope.abc import Device
 from microscope import TriggerType
 from microscope import TriggerMode
 
-import logging
 
 unwrap_method = {
     "interferometry": aoAlg.unwrap_interferometry,
