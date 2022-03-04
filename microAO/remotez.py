@@ -25,12 +25,14 @@ class RemoteZ():
         self.datapoints = []
         self.z_lookup = {}
 
-        control_matrix = self._device.proxy.get_controlMatrix()
-        self._n_actuators = control_matrix.shape[0]
-        self._n_modes = control_matrix.shape[1]
+        self._control_matrix = None
 
         self.update_calibration()
 
+    def set_control_matrix(self, control_matrix):
+        self._control_matrix = control_matrix
+        self._n_actuators = control_matrix.shape[0]
+        self._n_modes = control_matrix.shape[1]
 
     def calibrate(self, zstage, zpos, output_dir=None, defocus_modes=[4,11], other_modes=np.asarray([22, 5, 6, 7, 8, 9, 10]), start_from_flat=False):
         mover = depot.getHandlerWithName("{}".format(zstage.name))
