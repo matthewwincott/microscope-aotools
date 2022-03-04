@@ -174,7 +174,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             controlMatrix = np.asarray(userConfig.getValue("dm_controlMatrix"))
             self.proxy.set_controlMatrix(controlMatrix)
         except Exception:
-            pass
+            controlMatrix = None
 
         try:
             sys_flat = np.asarray(userConfig.getValue("dm_sys_flat"))

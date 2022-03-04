@@ -25,15 +25,17 @@ import numpy as np
 import Pyro4
 import time
 import logging
+import typing
+
 import aotools
 from microAO.aoAlg import AdaptiveOpticsFunctions
+from microAO.remotez import RemoteZ
 
 # Should fix this with multiple inheritance for this class!
 aoAlg = AdaptiveOpticsFunctions()
 
-from microscope.abc import Device
-from microscope import TriggerType
-from microscope import TriggerMode
+from microscope import TriggerType, TriggerMode, AxisLimits
+from microscope.abc import Device, Stage, StageAxis
 
 
 unwrap_method = {
@@ -163,11 +165,36 @@ class AdaptiveOpticsDevice(Device):
 
         self._wavefront_error_mode = self.wavefront_rms_error
 
+        # Set up remote z
+        self.remotez = RemoteZ(self)
+
+        if self.get_controlMatrix() is not None:
+            print('set control matrix in remotez')
+            self.remotez.set_control_matrix(self.get_controlMatrix())
+
     def _do_shutdown(self):
         pass
 
     def initialize(self, *args, **kwargs):
         pass
+
+    @Pyro4.expose
+    @property
+    def remotez(self):
+        return self._remotez
+
+    @Pyro4.expose
+    @remotez.setter
+    def remotez(self, value):
+        self._remotez = value
+
+    @Pyro4.expose
+    def get_remotez_datapoints(self):
+        return self.remotez.get_datapoints()
+
+    @Pyro4.expose
+    def set_remotez_datapoints(self, datapoints):
+        self.remotez.set_datapoints(datapoints)
 
     @Pyro4.expose
     def enable_camera(self):
@@ -1305,3 +1332,78 @@ class AdaptiveOpticsDevice(Device):
         else:
             ac_pos_correcting = self.set_phase(coef, offset=offset)
         return coef, ac_pos_correcting
+
+class RemoteFocusStage(Stage):
+    def __init__(self, device: AdaptiveOpticsDevice) -> None:
+        super().__init__()
+        self._axes = {'Z': RemoteFocusStageAxis(limits=AxisLimits(-10.0,10.0), device=device)}
+
+    @property
+    def axes(self) -> typing.Mapping[str, StageAxis]:
+        return self._axes
+
+    def move_by(self, delta: typing.Mapping[str, float]) -> None:
+        for name, rpos in delta.items():
+            self.axes[name].move_by(rpos)
+
+    def move_to(self, position: typing.Mapping[str, float]) -> None:
+        for name, pos in position.items():
+            self.axes[name].move_to(pos)
+
+    def set_zCal(self,axis,zCalibration):
+        self.axes[axis].setzCalibration=zCalibration
+    
+    def _do_shutdown(self) -> None:
+        return super()._do_shutdown()
+
+class RemoteFocusStageAxis(StageAxis):
+    def __init__(self, limits: AxisLimits, device: AdaptiveOpticsDevice) -> None:
+
+        super().__init__()
+        self._limits = limits
+        self._device = device
+
+        # Start axis in the middle of range.
+        self._position = self._limits.lower + (
+            (self._limits.upper - self._limits.lower) / 2.0
+        )
+
+    @property
+    def position(self) -> float:
+        return self._position
+
+    @property
+    def limits(self) -> AxisLimits:
+        return self._limits
+
+    def move_by(self, delta: float) -> None:
+        self.move_to(self._position + delta)
+
+    def move_to(self, pos: float) -> None:
+        self._device.remotez.set_z(pos)
+
+
+    def setupDigitalStack(self, start: float, moveSize: float,
+                          numMoves: int) -> int:
+        dm_shapes = np.zeros((numMoves,self.zCalibration.shape[1]-1))
+        self.saved_pos=self._position
+
+        # Set hardware trigger
+        (ttype, tmode) = self._device.get_trigger()
+        self._saved_ttype = ttype
+        self._saved_tmode = tmode
+        self._device.ao_element.set_trigger(TriggerType.FALLING_EDGE, TriggerMode.ONCE)
+
+        # Calculate DM shapes and queue
+        for i in range(numMoves):
+            dm_shapes[i]= self.calcDMShape(start+(moveSize*i))
+
+        self._device.queue_patterns(dm_shapes)
+        return numMoves
+
+    def cancelDigitalStack(self) -> None:
+        # Disable HW trigger
+        self._device.ao_element.set_trigger(self._saved_ttype,self._saved_tmode)
+        
+        # Return to original position
+        self.move_to(self.saved_pos)
