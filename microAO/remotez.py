@@ -133,6 +133,13 @@ class RemoteZ():
 
         return images
 
+    def get_datapoints(self):
+        return self.datapoints
+
+    def set_datapoints(self, datapoints):
+        self.datapoints = datapoints
+        self.update_calibration()
+
     def add_datapoint(self, datapoint):
         self.datapoints.append(datapoint)
         self.datapoints.sort(key=lambda d: d["z"])
@@ -183,7 +190,16 @@ class RemoteZ():
                     self.z_lookup[datatype].append(np.poly1d(coef)) 
 
     def set_z(self, z, datatype="zernike"):
+        if self._control_matrix is None:
+            print('no control matrix')
+
+            return
+
         try:
+            if len(self.z_lookup[datatype]) < 2:
+                print('no remotez calib')
+                return
+
             if datatype == "zernike":
                 values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_modes)])
                 self._device.set_correction("remotez", modes=values)
@@ -209,7 +225,7 @@ class RemoteZ():
                     except Exception as e:
                         print('Failed to write: {}'.format(key), e)
 
-    def load_datapoints(self, input_dir):      
+    def load_datapoints(self, input_dir):
         search_string = str(os.path.join(input_dir, '*.h5'))
 
         for fpath in glob.glob(search_string):
