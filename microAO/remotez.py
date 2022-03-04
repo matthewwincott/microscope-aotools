@@ -113,7 +113,7 @@ class RemoteZ():
         zpositions = np.linspace(
             zmin,
             zmax,
-            int(np.ceil((zmax - zmin) / zstepsize))
+            int((zmax - zmin) / zstepsize) + 1
         )
 
         if camera is None:
