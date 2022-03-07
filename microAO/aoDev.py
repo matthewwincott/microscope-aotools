@@ -1109,7 +1109,7 @@ class AdaptiveOpticsDevice(Device):
             total_corrections_offset = sum(corrections_offset) + 0.5
         else:
             total_corrections_offset = None
-        
+
         # Get actuator values from corrections and send to device
         actuator_pos = self.get_actuator_pos_from_modes(total_corrections_phase, total_corrections_offset)
         self.send(actuator_pos)
