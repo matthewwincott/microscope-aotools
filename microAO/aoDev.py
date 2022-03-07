@@ -1333,6 +1333,55 @@ class AdaptiveOpticsDevice(Device):
             ac_pos_correcting = self.set_phase(coef, offset=offset)
         return coef, ac_pos_correcting
 
+    # Remote focus attributes and methods
+    @Pyro4.expose
+    @property
+    def remotez(self):
+        return self._remotez
+
+    @Pyro4.expose
+    @remotez.setter
+    def remotez(self, value):
+        self._remotez = value
+
+    @Pyro4.expose
+    @property
+    def remotez_z_lookup(self):
+        return self.remotez.z_lookup
+
+    @Pyro4.expose
+    @property
+    def remotez_datapoints(self):
+        return self.remotez.datapoints
+
+    @Pyro4.expose
+    def remotez_set_z(self, z, datatype="zernike"):
+        return self.remotez.set_z(z, datatype)
+
+    @Pyro4.expose
+    def remotez_zstack(self, zmin, zmax, zstepssize):
+        self.remotez.zstack(zmin, zmax, zstepssize)
+
+    @Pyro4.expose
+    def remotez_calibrate(self, zstage, zpos):
+        self.remotez.calibrate(zstage, zpos)
+
+    @Pyro4.expose
+    def remotez_add_datapoint(self, datapoint):
+        self.remotez.add_datapoint(datapoint)
+
+    @Pyro4.expose
+    def remotez_remove_datapoint(self, datapoint):
+        self.remotez.remove_datapoint(datapoint)
+
+    @Pyro4.expose
+    def remotez_load_datapoints(self, input_dir):
+        self.remotez.load_datapoints(input_dir)
+
+    @Pyro4.expose
+    def remotez_save_datapoints(self, input_dir):
+        self.remotez.save_datapoints(input_dir)
+
 class RemoteFocusStage(Stage):
     def __init__(self, device: AdaptiveOpticsDevice) -> None:
         super().__init__()
