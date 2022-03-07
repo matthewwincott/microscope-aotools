@@ -178,6 +178,8 @@ class DMViewer(wx.Frame):
         super().__init__(parent, title="DM viewer")
         self._panel = wx.Panel(self, *args, **kwargs)
 
+        self._device = device
+
         # Load DM layout from file
         dm_layout_file = os.path.join(os.path.dirname(microAO.__file__), 'dm_layouts', dm_layout+'.json')
         
@@ -242,6 +244,11 @@ class DMViewer(wx.Frame):
         # Subscribe to pubsub events
         events.subscribe(PUBSUB_SET_ACTUATORS, self.HandleActuators)
 
+        # Update viewer
+        self._timer = wx.Timer(self._panel)
+        self._timer.Start(1000)
+        self._panel.Bind(wx.EVT_TIMER, self.RefreshValuesFromDevice, self._timer)
+
         # Force necessary updates
         self.OnScale(None)
 
@@ -260,6 +267,10 @@ class DMViewer(wx.Frame):
 
     def HandleActuators(self, actuator_values):
         self.SetActuators(actuator_values)
+
+    def RefreshValuesFromDevice(self, evt):
+        values = self._device.proxy.get_last_actuator_values()
+        self.SetActuators(values)
 
     def OnAutoscale(self, e):
         autoscale = self._autoscale_btn.GetValue()
