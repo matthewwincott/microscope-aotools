@@ -1411,8 +1411,7 @@ class RemoteFocusStageAxis(StageAxis):
         self.move_to(self._position + delta)
 
     def move_to(self, pos: float) -> None:
-        self._device.remotez.set_z(pos)
-
+        self._device.remotez_set_z(pos)
 
     def setupDigitalStack(self, start: float, moveSize: float,
                           numMoves: int) -> int:
