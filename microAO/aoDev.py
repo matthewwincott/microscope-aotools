@@ -179,24 +179,6 @@ class AdaptiveOpticsDevice(Device):
         pass
 
     @Pyro4.expose
-    @property
-    def remotez(self):
-        return self._remotez
-
-    @Pyro4.expose
-    @remotez.setter
-    def remotez(self, value):
-        self._remotez = value
-
-    @Pyro4.expose
-    def get_remotez_datapoints(self):
-        return self.remotez.get_datapoints()
-
-    @Pyro4.expose
-    def set_remotez_datapoints(self, datapoints):
-        self.remotez.set_datapoints(datapoints)
-
-    @Pyro4.expose
     def enable_camera(self):
         self.wavefront_camera.enable()
 
@@ -1136,7 +1118,7 @@ class AdaptiveOpticsDevice(Device):
             total_corrections_offset = sum(corrections_offset) + 0.5
         else:
             total_corrections_offset = None
-        
+
         # Get actuator values from corrections and send to device
         actuator_pos = self.get_actuator_pos_from_modes(total_corrections_phase, total_corrections_offset)
         self.send(actuator_pos)
