@@ -315,29 +315,36 @@ class RemoteFocusControl(wx.Frame):
 
 
     def addDatapont(self, datapoint):
-        self._device.proxy.remotez.add_datapoint(datapoint)
+        self._device.proxy.remotez_add_datapoint(datapoint)
 
         self.updateDatapointList()
         self.update()
 
     def removeDatapoint(self, datapoint):
-        self._device.proxy.remotez.remove_datapoint(datapoint)
+        self._device.proxy.remotez_remove_datapoint(datapoint)
         
         self.updateDatapointList()
         self.update()
 
     def updateDatapointList(self):
         self.listbox.Clear()
-        for d in self._device.proxy.remotez.datapoints:
+        for d in self._device.proxy.remotez_datapoints:
             self.listbox.AppendItems("{} ({})".format(d["z"],d["datatype"]))
 
     def OnRemoteZ(self, e):
         self.z_target = self.remotezSlider.GetValue()
-
         mode = self.datatype_control.GetStringSelection().lower()
-        self._device.proxy.remotez.set_z(self.z_target, mode)
 
+        # Apply corrections to device
+        actuator_pos, corrections_applied = self._device.proxy.remotez_set_z(self.z_target, mode)
+
+        # Update gui
         self.update_zpos()
+
+        # Publish events
+        events.publish(PUBSUB_SET_ACTUATORS, actuator_pos)
+        events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
+
 
     def OnRemoteZStack(self, e):
         # Get parameters
@@ -370,7 +377,7 @@ class RemoteFocusControl(wx.Frame):
             return
 
         # Perform z stack
-        images = self._device.proxy.remotez.zstack(zmin, zmax, zstepssize)
+        images = self._device.proxy.remotez_zstack(zmin, zmax, zstepssize)
 
         # Save data
         for i,image in enumerate(images):
@@ -406,7 +413,7 @@ class RemoteFocusControl(wx.Frame):
         zstage = self._device.getStage()
 
         if zstage is not None:
-            self._device.proxy.remotez.calibrate(zstage, zpos)
+            self._device.proxy.remotez_calibrate(zstage, zpos)
         
         self.updateDatapointList()
 
@@ -441,7 +448,7 @@ class RemoteFocusControl(wx.Frame):
         selected = self.listbox.GetSelections()
 
         for i in selected:
-            datapoint = self._device.proxy.remotez.datapoints[i]
+            datapoint = self._device.proxy.remotez_datapoints[i]
             self.removeDatapoint(datapoint)
         
         # Update GUI
@@ -457,7 +464,7 @@ class RemoteFocusControl(wx.Frame):
             return None
         
         # Save datapoints
-        self._device.proxy.remotez.save_datapoints(output_dir)
+        self._device.proxy.remotez_save_datapoints(output_dir)
 
     def OnLoadDatapoints(self, e):
         # Select input directory
@@ -469,8 +476,8 @@ class RemoteFocusControl(wx.Frame):
             return None
 
         # Load datapoints
-        self._device.proxy.remotez.load_datapoints(input_dir)
-
+        self._device.proxy.remotez_load_datapoints(input_dir)
+        
         # Update gui
         self.updateDatapointList()
         self.update()
@@ -492,10 +499,10 @@ class RemoteFocusControl(wx.Frame):
 
         # Get data
         current_datatype = self.datatype_vis.GetStringSelection().lower()
-        points = [a for a in self._device.proxy.remotez.datapoints if a["datatype"].lower() == current_datatype]
+        points = [a for a in self._device.proxy.remotez_datapoints if a["datatype"].lower() == current_datatype]
         z = np.array([point["z"] for point in points])
         values = np.array([point["values"] for point in points])
-        z_lookup = self._device.proxy.remotez.z_lookup[current_datatype]
+        z_lookup = self._device.proxy.remotez_z_lookup[current_datatype]
         
         try:
             n_measurements = values.shape[0]
