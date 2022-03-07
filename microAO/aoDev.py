@@ -1385,7 +1385,7 @@ class RemoteFocusStage(Stage):
         self.axes[axis].setzCalibration=zCalibration
     
     def _do_shutdown(self) -> None:
-        return super()._do_shutdown()
+        pass
 
 class RemoteFocusStageAxis(StageAxis):
     def __init__(self, limits: AxisLimits, device: AdaptiveOpticsDevice) -> None:
