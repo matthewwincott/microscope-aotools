@@ -256,6 +256,9 @@ class DMViewer(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self.OnClose)
 
     def SetActuators(self, actuator_values):
+        if actuator_values is None:
+            return
+
         self.actuator_values = actuator_values
 
         self._dm_view.SetActuators(actuator_values)
