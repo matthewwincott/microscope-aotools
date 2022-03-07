@@ -258,6 +258,9 @@ class DMViewer(wx.Frame):
     def SetActuators(self, actuator_values):
         self.actuator_values = actuator_values
 
+        if actuator_values is None:
+            return
+
         self._dm_view.SetActuators(actuator_values)
 
         if self._autoscale_btn.GetValue():
