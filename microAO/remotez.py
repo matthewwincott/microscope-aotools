@@ -133,13 +133,6 @@ class RemoteZ():
 
         return images
 
-    def get_datapoints(self):
-        return self.datapoints
-
-    def set_datapoints(self, datapoints):
-        self.datapoints = datapoints
-        self.update_calibration()
-
     def add_datapoint(self, datapoint):
         self.datapoints.append(datapoint)
         self.datapoints.sort(key=lambda d: d["z"])
@@ -154,7 +147,6 @@ class RemoteZ():
 
     def update_calibration(self, datatypes=None):
         # Get data
-        # current_datatype = self.datatype_vis.GetStringSelection().lower()
         if datatypes is None:
             datatypes = RF_DATATYPES
 
@@ -243,5 +235,5 @@ class RemoteZ():
                         datapoint[key] = f[key][()].decode('utf-8')
                     else:
                         datapoint[key] = f[key][()]                   
-                
+
                 self.add_datapoint(datapoint)
