@@ -195,6 +195,9 @@ class RemoteZ():
 
             return
 
+        actuator_pos = None
+        corrections = None
+
         try:
             if len(self.z_lookup[datatype]) < 2:
                 print('no remotez calib')
@@ -207,11 +210,13 @@ class RemoteZ():
                 values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_actuators)])
                 self._device.set_correction("remotez", actuator_values=values)
             
-            self._device.refresh_corrections(corrections=["remotez"])
+            actuator_pos, corrections = self._device.refresh_corrections(corrections=["remotez"])
 
         except IndexError:
             # No lookup data
             pass
+
+        return actuator_pos, corrections
     
     def save_datapoints(self, output_dir):
         for datapoint in self.datapoints:
