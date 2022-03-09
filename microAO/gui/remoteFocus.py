@@ -198,8 +198,6 @@ class RemoteFocusControl(wx.Frame):
 
         self.z_target = 0        
         
-        # Subscribe to pubsub events
-      
         root_panel = wx.Panel(self)
 
         # Create tabbed control interface
@@ -368,7 +366,6 @@ class RemoteFocusControl(wx.Frame):
 
         if dlg.ShowModal() == wx.ID_OK:
             output_dir = dlg.GetPath()
-            print(output_dir)
         else:
             return
 
@@ -407,7 +404,10 @@ class RemoteFocusControl(wx.Frame):
 
         zstage = self._device.getStage()
 
-        self._device.remotez.calibrate(zstage, zpos)
+        if zstage is not None:
+            self._device.remotez.calibrate(zstage, zpos)
+
+        self.updateDatapointList()
 
     def OnAddDatapointFromFile(self, e):
         dlg = RFAddDatapointFromFile(self)

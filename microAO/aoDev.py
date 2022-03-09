@@ -25,15 +25,15 @@ import numpy as np
 import Pyro4
 import time
 import logging
+
 import aotools
 from microAO.aoAlg import AdaptiveOpticsFunctions
 
 # Should fix this with multiple inheritance for this class!
 aoAlg = AdaptiveOpticsFunctions()
 
+from microscope import TriggerType, TriggerMode
 from microscope.abc import Device
-from microscope import TriggerType
-from microscope import TriggerMode
 
 
 unwrap_method = {
