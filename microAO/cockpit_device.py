@@ -876,6 +876,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         events.publish(PUBSUB_SET_ACTUATORS, actuator_pos)
         events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
 
+        return actuator_pos, corrections_applied
+
     def send(self, actuator_values):
         # Send values to device
         self.proxy.send(actuator_values)
