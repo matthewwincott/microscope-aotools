@@ -333,11 +333,16 @@ class RemoteFocusControl(wx.Frame):
 
     def OnRemoteZ(self, e):
         self.z_target = self.remotezSlider.GetValue()
-
         mode = self.datatype_control.GetStringSelection().lower()
-        self._device.remotez.set_z(self.z_target, mode)
+        actuator_pos, corrections_applied = self._device.remotez.set_z(self.z_target, mode)
 
+        # Update gui
         self.update_zpos()
+
+        # Publish events
+        events.publish(PUBSUB_SET_ACTUATORS, actuator_pos)
+        events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
+
 
     def OnRemoteZStack(self, e):
         # Get parameters
