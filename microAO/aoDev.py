@@ -1104,39 +1104,66 @@ class AdaptiveOpticsDevice(Device):
         self.add_correction(name, modes, actuator_values)
 
     @Pyro4.expose
-    def apply_corrections(self, corrections=[]):
-        # Filter required corrections
-        corrections_filtered = {key:val for key, val in self.corrections.items() if key in corrections}
-
+    def calc_phase_from_corrections(self, corrections):       
         # Sum corrections (modes and actuator values)
-        corrections_modes = [np.array(val["modes"]) for key, val in corrections_filtered.items() if (val["modes"] is not None)]
+        corrections_modes = [np.array(val["modes"]) for key, val in corrections.items() if (val["modes"] is not None)]
         if corrections_modes:
             total_corrections_phase = sum(corrections_modes)
         
-        corrections_offset = [(np.array(val["actuator_values"]) - 0.5) for key, val in corrections_filtered.items() if (val["actuator_values"] is not None)]
+        corrections_offset = [(np.array(val["actuator_values"]) - 0.5) for key, val in corrections.items() if (val["actuator_values"] is not None)]
         if corrections_offset:
             total_corrections_offset = sum(corrections_offset) + 0.5
         else:
             total_corrections_offset = None
 
-        # Get actuator values from corrections and send to device
+        return total_corrections_phase, total_corrections_offset
+
+    @Pyro4.expose
+    def calc_shape(self, corrections_list=[]):
+        # Filter required corrections
+        corrections = {key:val for key, val in self.corrections.items() if key in corrections_list}
+
+        # Get phase and offset from corrections        
+        total_corrections_phase, total_corrections_offset = self.calc_phase_from_corrections(corrections)
+
+        # Get actuator values from corrections
         actuator_pos = self.get_actuator_pos_from_modes(total_corrections_phase, total_corrections_offset)
+
+        return actuator_pos, corrections
+
+    @Pyro4.expose
+    def apply_corrections(self, corrections_list=[]):
+        # Get actuator positions and corrections
+        actuator_pos, corrections = self.calc_shape(corrections_list)
+
+        # Send to device
         self.send(actuator_pos)
 
         # Store last corrections
-        self.last_corrections = corrections_filtered.copy()
+        self.last_corrections = corrections.copy()
 
-        return actuator_pos, corrections_filtered
+        return actuator_pos, corrections
+
+    @Pyro4.expose
+    def get_last_corrections(self):
+        return self.last_corrections.copy()
+
+    @Pyro4.expose
+    def get_last_corrections_list(self):
+        return [key for key, value in self.last_corrections.items()]
 
     @Pyro4.expose
     def refresh_corrections(self, corrections=None):
         """ Refresh corrections. Ensure named corrections are applied if specified.
         """
-        corrections_list = [key for key, value in self.last_corrections.items()]
+        # Get list of last applied corrections
+        corrections_list = self.get_last_corrections_list()
 
+        # Add specified corrections
         if corrections is not None:
             corrections_list = list(set(corrections_list + corrections))
 
+        # Apply corrections
         actuator_pos, corrections_applied = self.apply_corrections(corrections_list)
 
         return actuator_pos, corrections_applied
