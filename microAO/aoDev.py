@@ -1415,6 +1415,10 @@ class RemoteFocusStage(Stage):
     def set_zCal(self,axis,zCalibration):
         self.axes[axis].setzCalibration=zCalibration
     
+    def getMovementTime(self, index: int, start: float, end: float) -> float:
+        del index
+        return 1
+
     def _do_shutdown(self) -> None:
         pass
 
@@ -1444,20 +1448,24 @@ class RemoteFocusStageAxis(StageAxis):
     def move_to(self, pos: float) -> None:
         self._device.remotez_set_z(pos)
 
+    def calc_shape(self, z):
+        return self._device.remotez_calc_shape(z)
+
     def setupDigitalStack(self, start: float, moveSize: float,
                           numMoves: int) -> int:
-        dm_shapes = np.zeros((numMoves,self.zCalibration.shape[1]-1))
+        dm_shapes = np.zeros((numMoves,self._device.get_n_actuators()))
+
         self.saved_pos=self._position
 
         # Set hardware trigger
         (ttype, tmode) = self._device.get_trigger()
         self._saved_ttype = ttype
         self._saved_tmode = tmode
-        self._device.ao_element.set_trigger(TriggerType.FALLING_EDGE, TriggerMode.ONCE)
 
         # Calculate DM shapes and queue
         for i in range(numMoves):
-            dm_shapes[i]= self.calcDMShape(start+(moveSize*i))
+            shape, _ = self.calc_shape(start+(moveSize*i))
+            dm_shapes[i] = shape
 
         self._device.queue_patterns(dm_shapes)
         return numMoves
@@ -1468,3 +1476,7 @@ class RemoteFocusStageAxis(StageAxis):
         
         # Return to original position
         self.move_to(self.saved_pos)
+
+    def getMovementTime(self, index: int, start: float, end: float) -> float:
+        del index
+        return 1
