@@ -1391,6 +1391,10 @@ class AdaptiveOpticsDevice(Device):
     def remotez_save_datapoints(self, input_dir):
         self.remotez.save_datapoints(input_dir)
 
+    @Pyro4.expose
+    def remotez_calc_shape(self, z):
+        return self.remotez.calc_shape(z)
+
 class RemoteFocusStage(Stage):
     def __init__(self, device: AdaptiveOpticsDevice) -> None:
         super().__init__()

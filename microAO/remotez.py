@@ -181,6 +181,42 @@ class RemoteZ():
 
                     self.z_lookup[datatype].append(np.poly1d(coef)) 
 
+    def calc_shape(self, z, datatype="zernike"):
+        if self._control_matrix is None:
+            print('no control matrix')
+
+            return
+
+        actuator_pos = None
+
+        try:
+            if len(self.z_lookup[datatype]) < 2:
+                print('no remotez calib')
+                return
+
+            if datatype == "zernike":
+                values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_modes)])
+                self._device.set_correction("remotez", modes=values)
+            elif datatype == "actuator":
+                values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_actuators)])
+                self._device.set_correction("remotez", actuator_values=values)
+            
+
+        except IndexError:
+            # No lookup data
+            pass
+
+        # Get list of last applied corrections
+        corrections_list = self._device.get_last_corrections_list()
+
+        # Add remotez correction
+        corrections_list = list(set(corrections_list + ["remotez"]))
+
+        # Get shape
+        actuator_pos = self._device.calc_shape(corrections_list)
+
+        return actuator_pos
+
     def set_z(self, z, datatype="zernike"):
         if self._control_matrix is None:
             print('no control matrix')
