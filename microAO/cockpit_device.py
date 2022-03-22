@@ -49,6 +49,7 @@ import tifffile
 from microAO.events import *
 from microAO.gui.main import MicroscopeAOCompositeDevicePanel
 from microAO.aoAlg import AdaptiveOpticsFunctions
+from microAO.remotez import RemoteZ
 
 aoAlg = AdaptiveOpticsFunctions()
 
@@ -222,6 +223,9 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             self.set_system_flat(sys_flat)
         except Exception:
             pass
+
+        # Initialise RemoteZ instance
+        self.remotez = RemoteZ(self)
 
     def _on_abort(self):
         for key in self._abort:
