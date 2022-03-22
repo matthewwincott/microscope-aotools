@@ -174,7 +174,7 @@ class _ColourBar(wx.Panel):
 
 
 class DMViewer(wx.Frame):
-    def __init__(self, parent, device, dm_layout='alpao69', actuator_shape = None, actuator_scale=None, *args, **kwargs):
+    def __init__(self, parent, device, dm_layout='alpao69', actuator_scale=None, *args, **kwargs):
         super().__init__(parent, title="DM viewer")
         self._panel = wx.Panel(self, *args, **kwargs)
 
@@ -190,7 +190,7 @@ class DMViewer(wx.Frame):
         actuator_scale = d['scale_shapes']
 
         # Set other attributes
-        self._actuator_values = np.zeros(len(actuators))
+        self.actuator_values = np.zeros(len(actuators))
 
         # Create widgets
         self._dm_view = _DMView(self._panel, actuators, actuator_scale=actuator_scale, size=(200,200))
