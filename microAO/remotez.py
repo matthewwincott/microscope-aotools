@@ -202,7 +202,8 @@ class RemoteZ():
 
             return
 
-        actuator_pos = None
+        # Get current remotez correction
+        correction_remotez_original = self._device.proxy.get_corrections(filter=["remotez"])
 
         try:
             if len(self.z_lookup[datatype]) < 2:
@@ -229,6 +230,14 @@ class RemoteZ():
 
         # Get shape
         actuator_pos = self._device.proxy.calc_shape(corrections_list)
+
+        # Restore original remotez correction
+        if correction_remotez_original:
+            self._device.set_correction(
+                "remotez",
+                modes=correction_remotez_original["remotez"]["modes"],
+                actuator_values=correction_remotez_original["remotez"]["actuator_values"]
+            )
 
         return actuator_pos
 
