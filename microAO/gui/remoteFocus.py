@@ -196,8 +196,6 @@ class RemoteFocusControl(wx.Frame):
         self._n_modes = control_matrix.shape[1]
         self._n_actuators = control_matrix.shape[0]
 
-        self.z_target = 0        
-        
         root_panel = wx.Panel(self)
 
         # Create tabbed control interface
@@ -332,9 +330,10 @@ class RemoteFocusControl(wx.Frame):
             self.listbox.AppendItems("{} ({})".format(d["z"],d["datatype"]))
 
     def OnRemoteZ(self, e):
-        self.z_target = self.remotezSlider.GetValue()
-        mode = self.datatype_control.GetStringSelection().lower()
-        actuator_pos, corrections_applied = self._device.remotez.set_z(self.z_target, mode)
+        actuator_pos, corrections_applied = self._device.remotez.set_z(
+            self.remotezSlider.GetValue(),
+            self.datatype_control.GetStringSelection().lower()
+        )
 
         # Update gui
         self.update_zpos()
@@ -518,14 +517,17 @@ class RemoteFocusControl(wx.Frame):
                 x1=np.linspace(np.min(z),np.max(z),500)
                 self.ax.plot(z, z_lookup[mode](z))
 
-            # Plot current z_target
-            self.ax_z_target = self.ax.axvline(self.z_target)
+            # Plot current z position
+            self.ax_z_position = self.ax.axvline(
+                self._device.remotez.get_z()
+            )
 
         self.canvas.draw()
 
     def update_zpos(self):
         try:
-            self.ax_z_target.set_xdata([self.z_target, self.z_target])
+            z = self._device.remotez.get_z()
+            self.ax_z_position.set_xdata([z, z])
             self.canvas.draw()
         except AttributeError:
             # No vline yet, skip

@@ -24,6 +24,7 @@ class RemoteZ():
         # Store state
         self.datapoints = []
         self.z_lookup = {}
+        self._position = 0
 
         self._control_matrix = self._device.proxy.get_controlMatrix()
         self._n_actuators = self._control_matrix.shape[0]
@@ -254,12 +255,17 @@ class RemoteZ():
             
             actuator_pos, corrections = self._device.refresh_corrections(corrections=["remotez"])
 
+            self._position = z
+
         except IndexError:
             # No lookup data
             pass
 
         return actuator_pos, corrections
-    
+
+    def get_z(self):
+        return self._position
+
     def save_datapoints(self, output_dir):
         for datapoint in self.datapoints:
             fname = "{}-{}.h5".format(datapoint["datatype"], str(datapoint["z"]).replace('.','_'))
