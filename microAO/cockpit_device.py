@@ -33,10 +33,12 @@ import time
 import queue
 import pathlib
 import json
+import decimal
 
 import cockpit.devices
 import cockpit.devices.device
 import cockpit.interfaces.imager
+import cockpit.handlers.stagePositioner
 from cockpit import depot
 import numpy as np
 import Pyro4
@@ -145,6 +147,12 @@ def mask_circular(dims, radius=None, centre=None):
     return dist <= radius
 
 class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
+    RF_DEFAULT_LIMITS = (-1, 1)  # micrometres
+    RF_POSHAN_NAME = "2 remote focus"
+    RF_POSHAN_GNAME = "2 stage motion"
+    RF_DURATION_TRAVEL = decimal.Decimal(0.001)
+    RF_DURATION_STABILISATION = decimal.Decimal(0.010)
+
     def __init__(self, name: str, config={}) -> None:
         super().__init__(name, config)
         self.proxy = None
@@ -230,6 +238,45 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
     def _on_abort(self):
         for key in self._abort:
             self._abort[key] = True
+
+    def getHandlers(self):
+        # Determine the hard limits
+        limits = self.RF_DEFAULT_LIMITS
+        limits_string = self.config.get("remote_focus_limits")
+        if limits_string is not None:
+            limits = tuple(
+                [
+                    int(limit_str.strip())
+                    for limit_str in limits_string.split(",")
+                ]
+            )
+        # Determine if the device is driven by an executor
+        exp_elig = False
+        t_handler = None
+        t_source = self.config.get("triggersource", None)
+        t_line = self.config.get("triggerline", None)
+        if t_source:
+            exp_elig = True
+            t_handler = depot.getHandler(t_source, depot.EXECUTOR)
+        # Return the handler
+        return [
+            cockpit.handlers.stagePositioner.PositionerHandler(
+                self.RF_POSHAN_NAME,
+                self.RF_POSHAN_GNAME,
+                exp_elig,
+                {
+                    "getMovementTime": lambda *_: self._rf_get_movement_time(),
+                    "getPosition": lambda _: self.remotez.get_z(),
+                    "moveAbsolute": lambda _, position: self._rf_move_absolute(position),
+                    "moveRelative": lambda _, delta: self._rf_move_relative(delta),
+                    "setupDigitalStack": lambda *args: self._rf_setup_exp_zstack(*args)
+                },
+                2,
+                limits,
+                trigHandler=t_handler,
+                trigLine=t_line
+            )
+        ]
 
     def makeUI(self, parent):
         return MicroscopeAOCompositeDevicePanel(parent, self)
@@ -917,3 +964,27 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
     def update_control_matrix(self, control_matrix):
         self.proxy.set_controlMatrix(control_matrix)
         self.remotez.set_control_matrix(control_matrix)
+
+    def _rf_get_movement_time(self):
+        return (self.RF_DURATION_TRAVEL, self.RF_DURATION_STABILISATION)
+
+    def _rf_move_absolute(self, position):
+        self.remotez.set_z(position)
+        time.sleep(sum(self._rf_get_movement_time()))
+        events.publish(events.STAGE_MOVER, 2)
+        events.publish(events.STAGE_STOPPED, self.RF_POSHAN_NAME)
+
+    def _rf_move_relative(self, delta):
+        self.remotez.set_z(self.remotez.get_z() + delta)
+        time.sleep(sum(self._rf_get_movement_time()))
+        events.publish(events.STAGE_MOVER, 2)
+        events.publish(events.STAGE_STOPPED, self.RF_POSHAN_NAME)
+
+    def _rf_setup_exp_zstack(self, start, step_size, steps, repeats=1):
+        patterns = np.zeros((steps * repeats, self.no_actuators))
+        # Calculate patterns
+        for i in range(patterns.shape[0]):
+            actuators = self.remotez.calc_shape(start + (step_size * i))
+            patterns[i] = actuators
+        # Queue patterns
+        self.proxy.queue_patterns(patterns)
