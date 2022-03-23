@@ -1,6 +1,4 @@
 import os
-from re import search
-import time
 from functools import partial
 import glob
 
@@ -26,18 +24,26 @@ class RemoteZ():
         self.z_lookup = {}
         self._position = 0
 
-        self._control_matrix = self._device.proxy.get_controlMatrix()
-        self._n_actuators = self._control_matrix.shape[0]
-        self._n_modes = self._control_matrix.shape[1]
+        self._n_actuators = 0
+        self._n_modes = 0
+        control_matrix = self._device.proxy.get_controlMatrix()
+        if control_matrix is not None:
+            self._n_actuators = control_matrix.shape[0]
+            self._n_modes = control_matrix.shape[1]
 
         self.update_calibration()
 
     def set_control_matrix(self, control_matrix):
-        self._control_matrix = control_matrix
         self._n_actuators = control_matrix.shape[0]
         self._n_modes = control_matrix.shape[1]
 
     def calibrate(self, zstage, zpos, output_dir=None, defocus_modes=[4,11], other_modes=np.asarray([22, 5, 6, 7, 8, 9, 10]), start_from_flat=False):
+        if self._n_actuators == 0:
+            raise Exception(
+                "Remote focusing calibration failed because the adaptive "
+                "element has not been calibrated."
+            )
+
         mover = depot.getHandlerWithName("{}".format(zstage.name))
 
         if start_from_flat:
@@ -196,27 +202,28 @@ class RemoteZ():
 
                     self.z_lookup[datatype].append(np.poly1d(coef)) 
 
-    def calc_shape(self, z, datatype="zernike"):
-        if self._control_matrix is None:
-            print('no control matrix')
-
-            return
+    def calc_shape(self, z, datatype="actuator"):
+        if self._n_actuators == 0:
+            raise Exception(
+                "Failed to calculate wavefront shape for remote focusing "
+                "because the adaptive element has not been calibrated."
+            )
+        if len(self.z_lookup[datatype]) < 2:
+            raise Exception(
+                "Failed to calculate wavefront shape for remote focusing "
+                "because the remote focusing has not been calibrated."
+            )
 
         # Get current remotez correction
         correction_remotez_original = self._device.proxy.get_corrections(filter=["remotez"])
 
         try:
-            if len(self.z_lookup[datatype]) < 2:
-                print('no remotez calib')
-                return
-
             if datatype == "zernike":
                 values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_modes)])
                 self._device.set_correction("remotez", modes=values)
             elif datatype == "actuator":
                 values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_actuators)])
                 self._device.set_correction("remotez", actuator_values=values)
-            
 
         except IndexError:
             # No lookup data
@@ -229,7 +236,7 @@ class RemoteZ():
         corrections_list = list(set(corrections_list + ["remotez"]))
 
         # Get shape
-        actuator_pos = self._device.proxy.calc_shape(corrections_list)
+        actuator_pos, _ = self._device.proxy.calc_shape(corrections_list)
 
         # Restore original remotez correction
         if correction_remotez_original:
@@ -242,26 +249,25 @@ class RemoteZ():
         return actuator_pos
 
     def set_z(self, z, datatype="actuator"):
-        if self._control_matrix is None:
-            print('no control matrix')
-
-            return
-
-        actuator_pos = None
-        corrections = None
+        if self._n_actuators == 0:
+            raise Exception(
+                "Failed to change the remote focus plane because the adaptive "
+                "element has not been calibrated."
+            )
+        if len(self.z_lookup[datatype]) < 2:
+            raise Exception(
+                "Failed to change the remote focus plane because the remote "
+                "focusing has not been calibrated."
+            )
 
         try:
-            if len(self.z_lookup[datatype]) < 2:
-                print('no remotez calib')
-                return
-
             if datatype == "zernike":
                 values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_modes)])
                 self._device.set_correction("remotez", modes=values)
             elif datatype == "actuator":
                 values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_actuators)])
                 self._device.set_correction("remotez", actuator_values=values)
-            
+
             actuator_pos, corrections = self._device.refresh_corrections(corrections=["remotez"])
 
             self._position = z

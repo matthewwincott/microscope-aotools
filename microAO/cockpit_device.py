@@ -214,7 +214,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         try:
             controlMatrix = np.asarray(userConfig.getValue("dm_controlMatrix"))
-            self.proxy.set_controlMatrix(controlMatrix)
+            self.update_control_matrix(controlMatrix)
         except Exception:
             pass
 
@@ -291,7 +291,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 controlMatrix = np.asarray(
                     userConfig.getValue("dm_controlMatrix")
                 )
-                self.proxy.set_controlMatrix(controlMatrix)
+                self.update_control_matrix(controlMatrix)
             except Exception:
                 raise e
 
@@ -486,7 +486,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 "dm_controlMatrix", np.ndarray.tolist(control_matrix)
             )
             # Propagate the control matrix to the microscope device
-            self.proxy.set_controlMatrix(control_matrix)
+            self.update_control_matrix(control_matrix)
         else:
             # Clear the flag
             self._abort["calib_calc"] = False
@@ -501,7 +501,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         if np.mean(assay[1:, 1:]) < 0:
             controlMatrix = self.proxy.get_controlMatrix()
-            self.proxy.set_controlMatrix((-1 * controlMatrix))
+            self.update_control_matrix(-1 * controlMatrix)
             assay = assay * -1
             userConfig.setValue(
                 "dm_controlMatrix", np.ndarray.tolist(controlMatrix)
@@ -913,3 +913,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         )
         # Apply the zernike coefficients
         return self.set_phase(zernike_coeff)
+    
+    def update_control_matrix(self, control_matrix):
+        self.proxy.set_controlMatrix(control_matrix)
+        self.remotez.set_control_matrix(control_matrix)
