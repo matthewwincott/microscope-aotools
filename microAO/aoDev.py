@@ -365,9 +365,8 @@ class AdaptiveOpticsDevice(Device):
         _logger.debug("Sending values: {}".format(values))
 
         ttype, tmode = self.get_trigger()
-        if ttype != "SOFTWARE":
+        if ttype != TriggerType.SOFTWARE:
             self.set_trigger(TriggerType.SOFTWARE, TriggerMode.ONCE)
-            ttype, tmode = self.get_trigger()
 
         # Need to normalise patterns because general DM class expects 0-1 values
         values[values > 1.0] = 1.0
@@ -379,7 +378,7 @@ class AdaptiveOpticsDevice(Device):
             raise e
 
         self.last_actuator_values = values
-        if (ttype, tmode) is not self.get_trigger():
+        if (ttype, tmode) != self.get_trigger():
             self.set_trigger(ttype, tmode)
 
     # This method is for AO elements such as SLMs where the phase shape can be applied directly by sending an image of
