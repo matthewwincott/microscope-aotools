@@ -47,6 +47,7 @@ from cockpit import events
 from cockpit.util import logger, userConfig
 import h5py
 import tifffile
+import microscope.devices
 
 from microAO.events import *
 from microAO.gui.main import MicroscopeAOCompositeDevicePanel
@@ -981,8 +982,23 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         events.publish(events.STAGE_STOPPED, self.RF_POSHAN_NAME)
 
     def _rf_setup_exp_zstack(self, start, step_size, steps, repeats=1):
-        patterns = np.zeros((steps * repeats, self.no_actuators))
+        ttype, tmode = self.proxy.get_trigger()
+        if (
+            ttype
+            not in (
+                microscope.devices.TriggerType.RISING_EDGE,
+                microscope.devices.TriggerType.FALLING_EDGE,
+            )
+            or tmode != microscope.devices.TriggerMode.ONCE
+        ):
+            raise Exception(
+                "Wrong trigger configuration for adaptive element. In order to"
+                " run experiments, please ensure that the device's trigger "
+                "type is set to RISING_EDGE/HIGH or FALLING_EDGE/LOW and that "
+                "its trigger mode is set to ONCE."
+            )
         # Calculate patterns
+        patterns = np.zeros((steps * repeats, self.no_actuators))
         for i in range(patterns.shape[0]):
             actuators = self.remotez.calc_shape(start + (step_size * i))
             patterns[i] = actuators
