@@ -10,6 +10,8 @@ import cockpit.gui.device
 import cockpit.gui.camera.window
 from cockpit.util import logger, userConfig
 
+import microscope.devices
+
 import wx
 from wx.lib.floatcanvas.FloatCanvas import FloatCanvas
 import wx.lib.floatcanvas.FCObjects as FCObjects
@@ -460,6 +462,9 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             "sensorless_results": None
         }
 
+        # Store previous trigger choice values
+        self.ao_trigger = self._device.proxy.get_trigger()
+
         # Create tabbed interface
         tabs = wx.Notebook(self, size=(350,-1))
         panel_calibration = wx.Panel(tabs)
@@ -482,6 +487,33 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         # Button to save flat
         saveFlatButton = wx.Button(panel_setup, label="Save flat")
         saveFlatButton.Bind(wx.EVT_BUTTON, self.OnSaveFlat)
+
+        # Choices to select adaptive element's trigger type and mode
+        trigger_choices = [
+            [member.name for member in list(enumeration)]
+            for enumeration in (
+                microscope.devices.TriggerType,
+                microscope.devices.TriggerMode,
+            )
+        ]
+        triggerTypeSizer = wx.BoxSizer(wx.HORIZONTAL)
+        triggerModeSizer = wx.BoxSizer(wx.HORIZONTAL)
+        triggerTypeLabel = wx.StaticText(panel_setup, label="AE trigger type:")
+        triggerTypeChoice = wx.Choice(panel_setup, choices=trigger_choices[0])
+        triggerTypeChoice.SetSelection(
+            trigger_choices[0].index(self.ao_trigger[0].name)
+        )
+        triggerTypeChoice.Bind(wx.EVT_CHOICE, self.OnTriggerTypeChoice)
+        triggerTypeSizer.Add(triggerTypeLabel, 1, wx.EXPAND | wx.RIGHT, 5)
+        triggerTypeSizer.Add(triggerTypeChoice, 1, wx.EXPAND)
+        triggerModeLabel = wx.StaticText(panel_setup, label="AE trigger mode:")
+        triggerModeChoice = wx.Choice(panel_setup, choices=trigger_choices[1])
+        triggerModeChoice.SetSelection(
+            trigger_choices[1].index(self.ao_trigger[1].name)
+        )
+        triggerModeChoice.Bind(wx.EVT_CHOICE, self.OnTriggerModeChoice)
+        triggerModeSizer.Add(triggerModeLabel, 1, wx.EXPAND | wx.RIGHT, 5)
+        triggerModeSizer.Add(triggerModeChoice, 1, wx.EXPAND)
 
         # Button to load applied aberration
         loadModesButton = wx.Button(panel_control, label="Load modes")
@@ -578,7 +610,9 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             loadControlMatrixButton,
             saveControlMatrixButton,
             loadFlatButton,
-            saveFlatButton
+            saveFlatButton,
+            triggerTypeSizer,
+            triggerModeSizer
         ]:
             sizer_panel_setup.Add(btn, panel_flags)
 
@@ -1257,3 +1291,33 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         current_actuator_values = self._device.proxy.get_last_actuator_values()
         userConfig.setValue("dm_sys_flat", np.ndarray.tolist(current_actuator_values))
         self._device.proxy.set_system_flat(current_actuator_values)
+
+    def OnTriggerTypeChoice(self, event: wx.CommandEvent):
+        try:
+            _, tmode = self._device.proxy.get_trigger()
+            ttype = microscope.devices.TriggerType[event.GetString()]
+            self._device.proxy.set_trigger(
+                ttype,
+                tmode
+            )
+            self.ao_trigger = (ttype, tmode)
+        except Exception as e:
+            # Changing the trigger failed => restore previous choice value
+            choice = event.GetEventObject()
+            choice.SetSelection(choice.FindString(self.ao_trigger[0].name))
+            raise e
+
+    def OnTriggerModeChoice(self, event: wx.CommandEvent):
+        try:
+            ttype, _ = self._device.proxy.get_trigger()
+            tmode = microscope.devices.TriggerMode[event.GetString()]
+            self._device.proxy.set_trigger(
+                ttype,
+                tmode
+            )
+            self.ao_trigger = (ttype, tmode)
+        except Exception as e:
+            # Changing the trigger failed => restore previous choice value
+            choice = event.GetEventObject()
+            choice.SetSelection(choice.FindString(self.ao_trigger[1].name))
+            raise e
