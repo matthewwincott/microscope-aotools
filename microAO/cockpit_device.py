@@ -998,9 +998,11 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 "its trigger mode is set to ONCE."
             )
         # Calculate patterns
-        patterns = np.zeros((steps * repeats, self.no_actuators))
-        for i in range(patterns.shape[0]):
+        patterns = np.zeros((steps, self.no_actuators))
+        for i in range(steps):
             actuators = self.remotez.calc_shape(start + (step_size * i))
             patterns[i] = actuators
+        # Repeat as necessary
+        patterns = np.tile(patterns, (repeats, 1))
         # Queue patterns
         self.proxy.queue_patterns(patterns)
