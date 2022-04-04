@@ -151,8 +151,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
     RF_DEFAULT_LIMITS = (-1, 1)  # micrometres
     RF_POSHAN_NAME = "2 remote focus"
     RF_POSHAN_GNAME = "2 stage motion"
-    RF_DURATION_TRAVEL = decimal.Decimal(0.001)
-    RF_DURATION_STABILISATION = decimal.Decimal(0.010)
+    RF_DURATION_TRAVEL = decimal.Decimal(1)  # miliseconds
+    RF_DURATION_STABILISATION = decimal.Decimal(1)  # miliseconds
 
     def __init__(self, name: str, config={}) -> None:
         super().__init__(name, config)
