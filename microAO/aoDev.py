@@ -436,6 +436,10 @@ class AdaptiveOpticsDevice(Device):
             self.set_trigger(ttype, tmode)
 
     @Pyro4.expose
+    def flush_patterns(self):
+        return self.ao_element.flush_patterns()
+
+    @Pyro4.expose
     def get_last_actuator_patterns(self):
         return self.last_actuator_patterns
 

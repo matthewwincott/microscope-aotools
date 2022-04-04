@@ -270,7 +270,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                     "getPosition": lambda _: self.remotez.get_z(),
                     "moveAbsolute": lambda _, position: self._rf_move_absolute(position),
                     "moveRelative": lambda _, delta: self._rf_move_relative(delta),
-                    "setupDigitalStack": lambda *args: self._rf_setup_exp_zstack(*args)
+                    "setupDigitalStack": lambda *args: self._rf_setup_exp_zstack(*args),
+                    "flushDigitalStack": lambda *_: self.proxy.flush_patterns()
                 },
                 2,
                 limits,
