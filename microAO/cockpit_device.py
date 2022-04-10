@@ -970,17 +970,15 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
     def _rf_get_movement_time(self):
         return (self.RF_DURATION_TRAVEL, self.RF_DURATION_STABILISATION)
 
-    @cockpit.util.threads.callInNewThread
     def _rf_move_absolute(self, position):
         self.remotez.set_z(position)
-        time.sleep(sum(self._rf_get_movement_time()))
+        time.sleep(sum(self._rf_get_movement_time()) * decimal.Decimal(1e-3))
         events.publish(events.STAGE_MOVER, 2)
         events.publish(events.STAGE_STOPPED, self.RF_POSHAN_NAME)
 
-    @cockpit.util.threads.callInNewThread
     def _rf_move_relative(self, delta):
         self.remotez.set_z(self.remotez.get_z() + delta)
-        time.sleep(sum(self._rf_get_movement_time()))
+        time.sleep(sum(self._rf_get_movement_time()) * decimal.Decimal(1e-3))
         events.publish(events.STAGE_MOVER, 2)
         events.publish(events.STAGE_STOPPED, self.RF_POSHAN_NAME)
 
