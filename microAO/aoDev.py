@@ -140,10 +140,6 @@ class AdaptiveOpticsDevice(Device):
         # Last applied phase image
         self.last_phase_pattern = None
 
-        # Record the trigger type and modes that have been set
-        self.last_trigger_type = None
-        self.last_trigger_mode = None
-
         # We might not use all the actuators. Create a mask for the actuators outside
         # the pupil so we can selectively calibrate them. 0 denotes actuators at
         # the edge, i.e. outside the pupil, and 1 denotes actuators in the pupil
@@ -259,12 +255,9 @@ class AdaptiveOpticsDevice(Device):
     def set_trigger(self, ttype, tmode):
         self.ao_element.set_trigger(ttype, tmode)
 
-        self.last_trigger_type = ttype
-        self.last_trigger_mode = tmode
-
     @Pyro4.expose
     def get_trigger(self):
-        return self.last_trigger_type, self.last_trigger_mode
+        return (self.ao_element.trigger_type, self.ao_element.trigger_mode)
 
     @Pyro4.expose
     def get_pattern_index(self):
