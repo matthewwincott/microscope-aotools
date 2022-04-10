@@ -1005,5 +1005,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             patterns[i] = actuators
         # Repeat as necessary
         patterns = np.tile(patterns, (repeats, 1))
+        # Skip the first pattern because experiments already place the remote
+        # focusing stage at the starting position
+        patterns = patterns[1:, :]
         # Queue patterns
         self.proxy.queue_patterns(patterns)
