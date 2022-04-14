@@ -20,6 +20,7 @@ import os
 
 from cockpit import events
 import cockpit.gui.dialogs
+import cockpit.util.userConfig
 
 import wx
 from wx.core import DirDialog
@@ -213,6 +214,7 @@ class RemoteFocusControl(wx.Frame):
         saveBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save data', size=(120, -1))
         loadBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Load data', size=(120, -1))
         calibrateBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate', size=(120, -1))
+        saveCalibrationBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save calibration', size=(120, -1))
 
         addFromCurrentBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromCurrent)
         addFromFileBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromFile)
@@ -220,6 +222,7 @@ class RemoteFocusControl(wx.Frame):
         saveBtn.Bind(wx.EVT_BUTTON, self.OnSaveDatapoints)
         loadBtn.Bind(wx.EVT_BUTTON, self.OnLoadDatapoints)
         calibrateBtn.Bind(wx.EVT_BUTTON, self.OnCalibrate)
+        saveCalibrationBtn.Bind(wx.EVT_BUTTON, self.OnSaveCalibration)
         
         data_panel_btns_sizer = wx.BoxSizer(wx.VERTICAL)
         data_panel_btns_sizer.Add(addFromFileBtn)
@@ -230,6 +233,7 @@ class RemoteFocusControl(wx.Frame):
         data_panel_btns_sizer.Add(loadBtn)
         data_panel_btns_sizer.Add(-1, 10)
         data_panel_btns_sizer.Add(calibrateBtn)
+        data_panel_btns_sizer.Add(saveCalibrationBtn)
         data_panel_btns.SetSizerAndFit(data_panel_btns_sizer)
 
         # Layout data panel
@@ -309,6 +313,10 @@ class RemoteFocusControl(wx.Frame):
         frame_sizer = wx.BoxSizer(wx.VERTICAL)
         frame_sizer.Add(root_panel, 1, wx.EXPAND)
         self.SetSizerAndFit(frame_sizer)
+        
+        # Update GUI
+        self.updateDatapointList()
+        self.update()
 
 
     def addDatapont(self, datapoint):
@@ -531,3 +539,15 @@ class RemoteFocusControl(wx.Frame):
         except AttributeError:
             # No vline yet, skip
             pass
+
+    def OnSaveCalibration(self, e):
+        datapoints = []
+        for datapoint in self._device.remotez.datapoints:
+            datapoint_new = {}
+            for key, value in datapoint.items():
+                if isinstance(value, np.ndarray):
+                    datapoint_new[key] = np.ndarray.tolist(value)
+                else:
+                    datapoint_new[key] = value
+            datapoints.append(datapoint_new)
+        cockpit.util.userConfig.setValue("rf_datapoints", datapoints)

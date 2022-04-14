@@ -31,7 +31,11 @@ class RemoteZ():
             self._n_actuators = control_matrix.shape[0]
             self._n_modes = control_matrix.shape[1]
 
-        self.update_calibration()
+        datapoints_init = userConfig.getValue("rf_datapoints")
+        if datapoints_init is not None:
+            self.datapoints = datapoints_init
+            self.update_calibration()
+            self.set_z(0)
 
     def set_control_matrix(self, control_matrix):
         self._n_actuators = control_matrix.shape[0]
