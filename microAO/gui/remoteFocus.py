@@ -199,20 +199,20 @@ class RemoteFocusControl(wx.Frame):
         root_panel = wx.Panel(self)
 
         # Create tabbed control interface
-        tabs = wx.Notebook(root_panel, size=(-1,-1))
+        tabs = wx.Notebook(root_panel)
 
         # Main data panel
-        data_panel = wx.Panel(tabs, size=(-1,-1))
-        self.listbox = wx.ListBox(data_panel, size=(300,200))
+        data_panel = wx.Panel(tabs)
+        self.listbox = wx.ListBox(data_panel)
 
         # Button side panel
         data_panel_btns = wx.Panel(data_panel)
-        addFromCurrentBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from current', size=(140, 30))
-        addFromFileBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from file', size=(140, 30))
-        removeBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Remove selected', size=(140, 30))
-        saveBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save data', size=(140, 30))
-        loadBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Load data', size=(140, 30))
-        calibrateBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate', size=(140, 30))
+        addFromCurrentBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from current', size=(120, -1))
+        addFromFileBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from file', size=(120, -1))
+        removeBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Remove selected', size=(120, -1))
+        saveBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save data', size=(120, -1))
+        loadBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Load data', size=(120, -1))
+        calibrateBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate', size=(120, -1))
 
         addFromCurrentBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromCurrent)
         addFromFileBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromFile)
@@ -235,10 +235,10 @@ class RemoteFocusControl(wx.Frame):
         # Layout data panel
         data_panel_sizer = wx.BoxSizer(wx.VERTICAL)
         hbox = wx.BoxSizer(wx.HORIZONTAL)
-        hbox.Add(data_panel_btns, wx.SizerFlags())
-        hbox.Add(self.listbox, wx.SizerFlags())
-        data_panel_sizer.Add(hbox, wx.SizerFlags().Centre())
-        data_panel.SetSizer(data_panel_sizer)
+        hbox.Add(data_panel_btns, 0, wx.EXPAND | wx.RIGHT, 5)
+        hbox.Add(self.listbox, 1, wx.EXPAND)
+        data_panel_sizer.Add(hbox, 1, wx.EXPAND | wx.ALL, 5)
+        data_panel.SetSizerAndFit(data_panel_sizer)
 
         # Control panel
         control_panel = wx.Panel(tabs)
@@ -255,8 +255,8 @@ class RemoteFocusControl(wx.Frame):
         self.datatype_control.Bind(wx.EVT_CHOICE, self.OnDatatypeChange)
 
         control_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        control_panel_sizer.Add(self.datatype_control)
-        control_panel_sizer.Add(row_sizer)
+        control_panel_sizer.Add(self.datatype_control, 0, wx.ALL, 5)
+        control_panel_sizer.Add(row_sizer, 0, wx.EXPAND | wx.RIGHT | wx.BOTTOM | wx.LEFT, 5)
 
         control_panel.SetSizerAndFit(control_panel_sizer)
 
@@ -286,9 +286,11 @@ class RemoteFocusControl(wx.Frame):
         self.modes.Bind(wx.EVT_TEXT, self.OnDatatypeChange)
 
         vis_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        vis_panel_sizer.Add(self.datatype_vis)
-        vis_panel_sizer.Add(self.modes)
-        vis_panel_sizer.Add(self.canvas)
+        vis_panel_config_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        vis_panel_config_sizer.Add(self.datatype_vis, 0, wx.EXPAND | wx.RIGHT, 5)
+        vis_panel_config_sizer.Add(self.modes, 0, wx.EXPAND)
+        vis_panel_sizer.Add(vis_panel_config_sizer, 0, wx.EXPAND | wx.ALL, 5)
+        vis_panel_sizer.Add(self.canvas, 1, wx.EXPAND)
 
         vis_panel.SetSizerAndFit(vis_panel_sizer)
         
@@ -297,18 +299,15 @@ class RemoteFocusControl(wx.Frame):
         tabs.AddPage(control_panel,"Control") 
         tabs.AddPage(experiment_panel,"Experiments") 
 
-        tabs.Layout()
-
         # Layout root panel
         root_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        root_panel_sizer.Add(tabs, wx.SizerFlags(1).Centre().Border(wx.BOTTOM, 12))
-        # root_panel_sizer.Add(data_panel, wx.SizerFlags(1).Centre().Border(wx.BOTTOM, 12))
-        root_panel_sizer.Add(vis_panel, wx.SizerFlags(1).Centre())
-        root_panel.SetSizer(root_panel_sizer)
+        root_panel_sizer.Add(tabs, 1, wx.EXPAND | wx.BOTTOM, 12)
+        root_panel_sizer.Add(vis_panel, 1, wx.EXPAND)
+        root_panel.SetSizerAndFit(root_panel_sizer)
 
         # Main frame sizer
         frame_sizer = wx.BoxSizer(wx.VERTICAL)
-        frame_sizer.Add(root_panel, wx.SizerFlags().Centre().Border(wx.ALL, 20))
+        frame_sizer.Add(root_panel, 1, wx.EXPAND)
         self.SetSizerAndFit(frame_sizer)
 
 
