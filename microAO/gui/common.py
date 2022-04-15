@@ -149,7 +149,7 @@ class MinMaxSliderCtrl(wx.Panel):
         
         # Set slider control value
         slider_val = 200 * (val - self._slider_min.value)/(self._slider_max.value - self._slider_min.value) - 100 
-        self._slider.SetValue(slider_val)
+        self._slider.SetValue(int(slider_val))
 
         # Emit mode change event, if required
         if not quiet:
