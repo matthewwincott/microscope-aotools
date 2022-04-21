@@ -17,10 +17,13 @@
 ## along with microAO.  If not, see <http://www.gnu.org/licenses/>.
 
 import os
+import pathlib
+import json
 
 from cockpit import events
 import cockpit.gui.dialogs
 import cockpit.util.userConfig
+import cockpit.util.threads
 
 import wx
 from wx.core import DirDialog
@@ -28,6 +31,11 @@ import wx.lib.newevent
 
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
+from matplotlib.backends.backend_wx import NavigationToolbar2Wx
+import matplotlib.backend_bases
+import matplotlib.patches
+import matplotlib.lines
+import matplotlib.patheffects
 
 import numpy as np
 import scipy
@@ -186,6 +194,136 @@ class RFAddDatapointFromCurrent(wx.Dialog):
     def GetData(self):
         return self.data
 
+class _BeadPicker(wx.Dialog):
+    """Window to select a rectangular 2D ROI in a 3D image.
+
+    Used for picking beads.
+    """
+
+    _DEFAULT_CMAP = "plasma"
+
+    def __init__(self, parent, image_stack: np.ndarray) -> None:
+        super().__init__(
+            parent,
+            title="Bead picker",
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER
+        )
+        if len(image_stack.shape) != 3:
+            print(
+                "ERROR: Bead Picker instance received misshaped data! Expected"
+                f" 3 dimensions (ZYX) but received {len(image_stack.shape)}."
+            )
+        self._imgs = image_stack
+        self._imgs_idx = image_stack.shape[0] // 2
+        self._selecting = False
+        self._rect_origin = (0.0, 0.0)
+
+        # Draw the figure and add a canvas
+        fig = Figure()
+        axes = fig.add_subplot()
+        self._axes_image = axes.imshow(
+            self._imgs[self._imgs_idx], cmap=self._DEFAULT_CMAP
+        )
+        rect_edge = self._axes_image.get_cmap().get_over()
+        rect_edge[3] = 0.3
+        self._rect = matplotlib.patches.Rectangle(
+            (0, 0), 0, 0, linewidth=2, ec=rect_edge, fc=(0, 0, 0, 0)
+        )
+        axes.add_patch(self._rect)
+        axes.set_xticks([])
+        axes.set_yticks([])
+        axes.set_frame_on(False)
+        fig.colorbar(self._axes_image, ax=axes)
+        fig.tight_layout()
+        self._canvas = FigureCanvas(self, wx.ID_ANY, fig)
+
+        # Event handling configuration for the canvas
+        self._canvas.mpl_connect('motion_notify_event', self._on_motion_notify)
+        self._canvas.mpl_connect('button_press_event', self._on_button_press)
+        self._canvas.mpl_connect('button_release_event', self._on_button_release)
+
+        # Add toolbar
+        self._toolbar = NavigationToolbar2Wx(self._canvas)
+        self._toolbar.Show()
+
+        # Add a slider
+        sizer_row0 = wx.BoxSizer(wx.VERTICAL)
+        self._slider = wx.Slider(
+            self,
+            value=self._imgs_idx + 1,
+            minValue=1,
+            maxValue=image_stack.shape[0],
+            style=wx.SL_LABELS
+        )
+        self._slider.Bind(wx.EVT_SLIDER, self._on_slider)
+        sizer_row0.Add(self._slider, 0, wx.EXPAND)
+
+        # Add buttons
+        sizer_row1 = wx.StdDialogButtonSizer()
+        for button_id in (wx.ID_OK, wx.ID_CANCEL):
+            button = wx.Button(self, button_id)
+            sizer_row1.Add(button)
+        sizer_row1.Realize()
+
+        # Finalise layout
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self._canvas, 1, wx.SHAPED)
+        sizer.Add(self._toolbar, 0, wx.LEFT | wx.EXPAND)
+        sizer.Add(sizer_row0, 0, wx.EXPAND | wx.ALL, 5)
+        sizer.Add(sizer_row1, 0, wx.ALL, 5)
+        self.SetSizerAndFit(sizer)
+
+    def _on_motion_notify(self, event: matplotlib.backend_bases.MouseEvent):
+        if not event.inaxes or self._toolbar.mode:
+            # Do not do anything if the cursor is not over the axes or if one
+            # of the toolbar tools is being used
+            return
+        if self._selecting:
+            side = max(
+                event.xdata - self._rect_origin[0],
+                event.ydata - self._rect_origin[1]
+            )
+            self._rect.set_width(side)
+            self._rect.set_height(side)
+            self._canvas.draw()
+
+    def _on_button_press(self, event: matplotlib.backend_bases.MouseEvent):
+        if not event.inaxes or self._toolbar.mode:
+            # Do not do anything if the cursor is not over the axes or if one
+            # of the toolbar tools is being used
+            return
+        self._selecting = True
+        self._rect_origin = (event.xdata, event.ydata)
+        self._rect.set_xy(self._rect_origin)
+        self._rect.set_width(0)
+        self._rect.set_height(0)
+
+    def _on_button_release(self, event: matplotlib.backend_bases.MouseEvent):
+        if not event.inaxes or self._toolbar.mode:
+            # Do not do anything if the cursor is not over the axes or if one
+            # of the toolbar tools is being used
+            return
+        self._selecting = False
+
+    def _on_slider(self, event: wx.CommandEvent):
+        self._axes_image.set_data(self._imgs[event.GetInt() - 1])
+        self._canvas.draw()
+
+    def get_roi(self):
+        roi = (
+            *self._rect.get_xy(),
+            self._rect.get_width(),
+            self._rect.get_height()
+        )
+        if roi[2] < 0.0:
+            # The rectangle was drawn right to left => roi needs adjustment
+            roi = (
+                roi[0] + roi[2],
+                roi[1] + roi[3],
+                np.abs(roi[2]),
+                np.abs(roi[3])
+            )
+        return tuple(map(round, roi))
 
 class RemoteFocusControl(wx.Frame):
     def __init__(self, parent, device, **kwargs):
@@ -213,15 +351,17 @@ class RemoteFocusControl(wx.Frame):
         removeBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Remove selected', size=(120, -1))
         saveBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save data', size=(120, -1))
         loadBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Load data', size=(120, -1))
-        calibrateBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate', size=(120, -1))
-        saveCalibrationBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save calibration', size=(120, -1))
+        calibrate1Btn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate 1', size=(120, -1))
+        calibrate2Btn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate 2', size=(120, -1))
+        saveCalibrationBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save all calibration', size=(120, -1))
 
         addFromCurrentBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromCurrent)
         addFromFileBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromFile)
         removeBtn.Bind(wx.EVT_BUTTON, self.OnRemoveDatapoint)
         saveBtn.Bind(wx.EVT_BUTTON, self.OnSaveDatapoints)
         loadBtn.Bind(wx.EVT_BUTTON, self.OnLoadDatapoints)
-        calibrateBtn.Bind(wx.EVT_BUTTON, self.OnCalibrate)
+        calibrate1Btn.Bind(wx.EVT_BUTTON, self.OnCalibrate1)
+        calibrate2Btn.Bind(wx.EVT_BUTTON, self.OnCalibrate2)
         saveCalibrationBtn.Bind(wx.EVT_BUTTON, self.OnSaveCalibration)
         
         data_panel_btns_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -232,7 +372,8 @@ class RemoteFocusControl(wx.Frame):
         data_panel_btns_sizer.Add(saveBtn)
         data_panel_btns_sizer.Add(loadBtn)
         data_panel_btns_sizer.Add(-1, 10)
-        data_panel_btns_sizer.Add(calibrateBtn)
+        data_panel_btns_sizer.Add(calibrate1Btn)
+        data_panel_btns_sizer.Add(calibrate2Btn)
         data_panel_btns_sizer.Add(saveCalibrationBtn)
         data_panel_btns.SetSizerAndFit(data_panel_btns_sizer)
 
@@ -318,6 +459,9 @@ class RemoteFocusControl(wx.Frame):
         self.updateDatapointList()
         self.update()
 
+        # Subscribe to calibration events
+        events.subscribe(PUBSUB_RF_CALIB2_DATA, self.OnCalibrate2Data)
+        events.subscribe(PUBSUB_RF_CALIB2_PROJ, self.OnCalibrate2Projections)
 
     def addDatapont(self, datapoint):
         self._device.remotez.add_datapoint(datapoint)
@@ -389,7 +533,7 @@ class RemoteFocusControl(wx.Frame):
         imageio.mimwrite(fpath, images, format="tif")
 
 
-    def OnCalibrate(self, e):
+    def OnCalibrate1(self, e):
         # Get parameters
         inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
             self,
@@ -416,9 +560,111 @@ class RemoteFocusControl(wx.Frame):
         zstage = self._device.getStage()
 
         if zstage is not None:
-            self._device.remotez.calibrate(zstage, zpos)
+            self._device.remotez.calibrate1(zstage, zpos)
 
         self.updateDatapointList()
+
+    def OnCalibrate2(self, e):
+        # Update status bar
+        events.publish(
+            events.UPDATE_STATUS_LIGHT,
+            "image count",
+            "Remote focus calibration | Configuring..."
+        )
+        # Get all the necessary handlers
+        handlers_zstage = self._device.getStage()
+        handlers_camera = self._device.getCamera()
+        handlers_imager = self._device.getImager()
+        # Select output directory
+        output_dir_path = None
+        with DirDialog(None, "Select data output directory") as dlg:
+            if dlg.ShowModal() == wx.ID_OK:
+                output_dir_path = pathlib.Path(dlg.GetPath())
+            else:
+                print(
+                    "Output directory selection cancelled during remote focus "
+                    "calibration. Aborting..."
+                )
+                return
+        # Get the calibration parameters
+        inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
+            self,
+            "Get remote Z calibration parameters (all in micrometres)",
+            [
+                "Defocus min",
+                "Defocus max",
+                "Defocus step",
+                "Stage offset min",
+                "Stage offset max",
+                "Stage step",
+            ],
+            (
+                -5,
+                5,
+                0.5,
+                -5,
+                5,
+                0.5
+            ),
+        )
+        calib_params = {
+            "defocus_min": float(inputs[0]),
+            "defocus_max": float(inputs[1]),
+            "defocus_step": float(inputs[2]),
+            "stage_min": float(inputs[3]),
+            "stage_max": float(inputs[4]),
+            "stage_step": float(inputs[5]),
+        }
+        # Save the calibration parameters
+        with open(output_dir_path.joinpath(f"calib_params.json"), "w") as fo:
+            json.dump(calib_params, fo)
+        # Launch the calibration process
+        self._device.remotez.calibrate2_get_data(
+            handlers_zstage,
+            handlers_camera,
+            handlers_imager,
+            calib_params,
+            wx.GetApp().Objectives.GetPixelSize(),
+            output_dir_path
+        )
+
+    @cockpit.util.threads.callInMainThread
+    def OnCalibrate2Data(self, rf_stacks, output_dir_path, defocus_step):
+        events.publish(
+            events.UPDATE_STATUS_LIGHT,
+            "image count",
+            "Remote focus calibration | Selecting bead..."
+        )
+        # Ask the user to select a bead, using the middle stack
+        bead_roi = None
+        with _BeadPicker(self, rf_stacks[len(rf_stacks) // 2].images) as dlg:
+            if dlg.ShowModal() == wx.ID_OK:
+                bead_roi = dlg.get_roi()
+            else:
+                print(
+                    "ERROR: Bead selection cancelled. Aborting remote focus "
+                    "calibration process..."
+                )
+                return
+        np.savetxt(
+            output_dir_path.joinpath(
+                f"remote-focus-zstack_bead-roi.txt",
+            ),
+            bead_roi
+        )
+        # Calculate orthogonal projects
+        self._device.remotez.calibrate2_get_projections(
+            rf_stacks,
+            bead_roi,
+            wx.GetApp().Objectives.GetPixelSize(),
+            defocus_step,
+            output_dir_path
+        )
+
+    @cockpit.util.threads.callInMainThread
+    def OnCalibrate2Projections(self):
+        # Clear status light
+        events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
 
     def OnAddDatapointFromFile(self, e):
         dlg = RFAddDatapointFromFile(self)

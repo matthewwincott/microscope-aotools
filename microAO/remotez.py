@@ -1,18 +1,76 @@
 import os
 from functools import partial
 import glob
+import dataclasses
 
 import numpy as np
 import scipy
 import h5py
+import tifffile
+import skimage.transform
 
 from cockpit import depot, events
-from cockpit.util import logger, userConfig
+from cockpit.util import logger, userConfig, threads
 from microAO.gui.remoteFocus import RF_DATATYPES
 from microAO.gui.sensorlessViewer import SensorlessResultsViewer
 from microAO.events import *
 
 RF_DATATYPES = ["zernike", "actuator"]
+
+@dataclasses.dataclass(frozen=True)
+class _RemoteFocusStack:
+    stage_position: float
+    rf_offsets: np.ndarray
+    images: list[np.ndarray]
+
+def _orthogonal_projection(image, point = None, xy2z_ratio=1.0):
+    """Both image and point have dimensions (Z, Y, X)."""
+    # Create new images
+    projection_zx = np.zeros((image.shape[0], image.shape[2]))
+    projection_zy = np.zeros((image.shape[0], image.shape[1]))
+    # Determine projection point
+    if point is None:
+        point = [dim // 2 for dim in image.shape]
+    # Project and return
+    for zi in range(image.shape[0]):
+        projection_zx[zi] = image[zi, point[1], :]
+        projection_zy[zi] = image[zi, :, point[2]]
+    # Scale projections if necessary
+    if xy2z_ratio != 1.0:
+        new_z = image.shape[0] // xy2z_ratio
+        projection_zx = np.around(
+            skimage.transform.resize(
+                projection_zx,
+                (new_z, projection_zx.shape[1])
+            )
+        ).astype(image.dtype)
+        projection_zy = np.around(
+            skimage.transform.resize(
+                projection_zy,
+                (new_z, projection_zy.shape[1])
+            )
+        ).astype(image.dtype)
+    return (image[point[0]], projection_zx, projection_zy)
+
+def _find_bead_centre(bead_image):
+    # Get the centre point an expand its dimensions to 1 above the image
+    centre = np.array(bead_image.shape) / 2
+    for _ in range(bead_image.ndim):
+        centre = centre[:, np.newaxis]
+    # Calculate distances from the centre
+    distances = np.linalg.norm(
+        np.indices(bead_image.shape) - centre + 0.5, axis=0
+    )
+    # Build a list of tuples
+    pixels = []
+    for i in range(0, np.prod(bead_image.shape)):
+        indices = np.unravel_index(i, bead_image.shape)
+        pixels.append((indices, bead_image[indices], distances[indices]))
+    # Sort by distance first because it is less important
+    pixels.sort(key=lambda x: x[-1])
+    pixels.sort(key=lambda x: x[-2], reverse=True)
+    # Return the indices of the top item
+    return pixels[0][0]
 
 class RemoteZ():
     def __init__(self, device):
@@ -41,7 +99,7 @@ class RemoteZ():
         self._n_actuators = control_matrix.shape[0]
         self._n_modes = control_matrix.shape[1]
 
-    def calibrate(self, zstage, zpos, output_dir=None, defocus_modes=[4,11], other_modes=np.asarray([22, 5, 6, 7, 8, 9, 10]), start_from_flat=False):
+    def calibrate1(self, zstage, zpos, output_dir=None, defocus_modes=[4,11], other_modes=np.asarray([22, 5, 6, 7, 8, 9, 10]), start_from_flat=False):
         if self._n_actuators == 0:
             raise Exception(
                 "Remote focusing calibration failed because the adaptive "
@@ -88,6 +146,194 @@ class RemoteZ():
             }
 
             self.add_datapoint(datapoint)
+
+    @threads.callInNewThread
+    def calibrate2_get_data(
+        self,
+        handlers_zstage,
+        handlers_camera,
+        handlers_imager,
+        calib_params,
+        xy_pixelsize,
+        output_dir_path
+    ):
+        # Obtain the image stacks
+        stage_offsets = np.linspace(
+            calib_params["stage_min"],
+            calib_params["stage_max"],
+            int((
+                (calib_params["stage_max"] - calib_params["stage_min"]) /
+                calib_params["stage_step"]
+            )) + 1
+        )
+        rf_stacks = [None] * stage_offsets.shape[0]
+        stage_original_position = handlers_zstage.getPosition() # um
+        for index, zpos_stage in enumerate(
+            stage_original_position + stage_offsets
+        ):
+            # Update status bar
+            events.publish(
+                events.UPDATE_STATUS_LIGHT,
+                "image count",
+                f"Remote focus calibration | Obtaining Z stack {index + 1} / "
+                f"{stage_offsets.shape[0]}..."
+            )
+            # Move the stage to the right position
+            handlers_zstage.moveAbsolute(zpos_stage)
+            # Do a remote focus Z stack and store the images
+            rf_stacks[index] = _RemoteFocusStack(
+                stage_position=handlers_zstage.getPosition(),
+                rf_offsets=np.linspace(
+                    calib_params["defocus_min"],
+                    calib_params["defocus_max"],
+                    int((calib_params["defocus_max"] - calib_params["defocus_min"]) / calib_params["defocus_step"]) + 1
+                ),
+                images=np.array(
+                    self.zstack(
+                        calib_params["defocus_min"],
+                        calib_params["defocus_max"],
+                        calib_params["defocus_step"],
+                        camera=handlers_camera,
+                        imager=handlers_imager
+                    )
+                )
+            )
+            # For convenience, ensure the stack is always ascending in terms of
+            # Z positions
+            if (
+                rf_stacks[index].rf_offsets[0] >
+                rf_stacks[index].rf_offsets[-1]
+            ):
+                # Descending offsets => reverse both offsets and images
+                rf_stacks[index].rf_offsets = np.flipud(
+                    rf_stacks[index].rf_offsets
+                )
+                rf_stacks[index].images = np.flipud(rf_stacks[index].images)
+        # Move the stage to its original position
+        handlers_zstage.moveAbsolute(stage_original_position)
+        # Ensure stacks are sorted by stage position
+        rf_stacks.sort(key=lambda item: item.stage_position)
+        # Save the collected data
+        events.publish(
+            events.UPDATE_STATUS_LIGHT,
+            "image count",
+            "Remote focus calibration | Saving data..."
+        )
+        for rf_stack in rf_stacks:
+            tifffile.imwrite(
+                output_dir_path.joinpath(
+                    f"remote-focus-zstack_z{rf_stack.stage_position:.03f}um"
+                    ".ome.tif"
+                ),
+                rf_stack.images,
+                metadata = {
+                    "axes": "ZYX",
+                    "PhysicalSizeX": xy_pixelsize,                  # um
+                    "PhysicalSizeY": xy_pixelsize,                  # um
+                    "PhysicalSizeZ": calib_params["defocus_step"],  # um
+                }
+            )
+        # Inform the GUI thread that a bead needs to be selected
+        events.publish(
+            PUBSUB_RF_CALIB2_DATA,
+            rf_stacks,
+            output_dir_path,
+            calib_params["defocus_step"]
+        )
+
+    @threads.callInNewThread
+    def calibrate2_get_projections(
+        self,
+        rf_stacks,
+        bead_roi,
+        xy_pixelsize,
+        defocus_step,
+        output_dir_path
+    ):
+        events.publish(
+            events.UPDATE_STATUS_LIGHT,
+            "image count",
+            "Remote focus calibration | Calculating orthogonal views..."
+        )
+        # Find minimum and maximum Z values, and total Z range in px
+        z_min_um = rf_stacks[0].stage_position + rf_stacks[0].rf_offsets[0]
+        z_max_um = rf_stacks[-1].stage_position + rf_stacks[-1].rf_offsets[-1]
+        z_range_px = int(np.ceil((z_max_um - z_min_um) / xy_pixelsize))
+        # Process stacks
+        projections_all_padded = []
+        for rf_stack in rf_stacks:
+            # Crop bead
+            bead = rf_stack.images[
+                :,
+                bead_roi[1] : bead_roi[1] + bead_roi[3],
+                bead_roi[0] : bead_roi[0] + bead_roi[2]
+            ]
+            # Derive orthogonal views
+            projections = _orthogonal_projection(
+                bead,
+                _find_bead_centre(bead),
+                xy_pixelsize / defocus_step
+            )[1:]
+            # Pad the projections with zeros if necessary
+            offset_top_um = (
+                z_max_um -
+                (rf_stack.stage_position + rf_stack.rf_offsets[-1])
+            )
+            offset_top_px = int(np.around(offset_top_um / xy_pixelsize))
+            offset_bottom_px = (
+                z_range_px - offset_top_px - projections[0].shape[0]
+            )
+            if offset_bottom_px < 0:
+                # The image has been offset too much => clamp it to the bottom
+                offset_top_px += offset_bottom_px
+                offset_bottom_px = 0
+            projections_all_padded.append([])
+            for projection in projections:
+                padded_stack = []
+                if offset_top_px > 0:
+                    padded_stack.append(
+                        np.zeros(
+                            (offset_top_px, projection.shape[1]),
+                            dtype=projection.dtype
+                        )
+                    )
+                padded_stack.append(projection)
+                if offset_bottom_px > 0:
+                    padded_stack.append(
+                        np.zeros(
+                            (offset_bottom_px, projection.shape[1]),
+                            dtype=projection.dtype
+                        )
+                    )
+                projections_all_padded[-1].append(np.vstack(padded_stack))
+        # Concatenate the individual padded projections
+        projections_zx_concat = np.concatenate(
+            [p[0] for p in projections_all_padded],
+            axis=1
+        )
+        projections_zy_concat = np.concatenate(
+            [p[1] for p in projections_all_padded],
+            axis=1
+        )
+        # Save concatenated projections
+        tifffile.imwrite(
+            output_dir_path.joinpath("orthogonal-views_zx.ome.tif"),
+            projections_zx_concat,
+            metadata = {
+                "PhysicalSizeX": xy_pixelsize,  # um
+                "PhysicalSizeY": xy_pixelsize,  # um
+            }
+        )
+        tifffile.imwrite(
+            output_dir_path.joinpath("orthogonal-views_zy.ome.tif"),
+            projections_zy_concat,
+            metadata = {
+                "PhysicalSizeX": xy_pixelsize,  # um
+                "PhysicalSizeY": xy_pixelsize,  # um
+            }
+        )
+        # Ask the GUI thread to update the status light
+        events.publish(PUBSUB_RF_CALIB2_PROJ)
 
     def sensorless_correct(self, modes, start_values = None):
         # Get current sensorless params
