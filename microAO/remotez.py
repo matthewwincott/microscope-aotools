@@ -79,7 +79,7 @@ class RemoteZ():
 
         # Store state
         self.datapoints = []
-        self.z_lookup = {}
+        self.z_lookup = {key:[] for key in RF_DATATYPES}
         self._position = 0
 
         self._n_actuators = 0
