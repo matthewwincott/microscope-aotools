@@ -8,6 +8,7 @@ import json
 
 from cockpit import events
 import microAO
+import microAO.dm_layouts
 from microAO.events import *
 
 class _DMView(wx.Panel):
@@ -174,20 +175,17 @@ class _ColourBar(wx.Panel):
 
 
 class DMViewer(wx.Frame):
-    def __init__(self, parent, device, dm_layout='alpao69', actuator_scale=None, *args, **kwargs):
+    def __init__(self, parent, device, dm_layout_name='alpao69', actuator_scale=None, *args, **kwargs):
         super().__init__(parent, title="DM viewer")
         self._panel = wx.Panel(self, *args, **kwargs)
 
         self._device = device
 
         # Load DM layout from file
-        dm_layout_file = os.path.join(os.path.dirname(microAO.__file__), 'dm_layouts', dm_layout+'.json')
-        
-        with open(dm_layout_file, 'r') as f:
-            d = json.load(f)
-    
-        actuators = d['locations']
-        actuator_scale = d['scale_shapes']
+        dm_layout = microAO.dm_layouts.get_layout(dm_layout_name)
+
+        actuators = dm_layout['locations']
+        actuator_scale = dm_layout['scale_shapes']
 
         # Set other attributes
         self.actuator_values = np.zeros(len(actuators))

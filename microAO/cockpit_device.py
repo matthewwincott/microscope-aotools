@@ -48,6 +48,7 @@ from cockpit.util import logger, userConfig
 import h5py
 import tifffile
 import microscope.devices
+import microAO.dm_layouts
 
 from microAO.events import *
 from microAO.gui.main import MicroscopeAOCompositeDevicePanel
@@ -1010,3 +1011,38 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         patterns = patterns[1:, :]
         # Queue patterns
         self.proxy.queue_patterns(patterns)
+
+    def _generate_exercise_pattern(
+        gain=0.0,
+        layout_name="alpao69",
+        pattern_name="checker"
+    ):
+        if gain < -1.0 or gain > 1.0:
+            raise Exception(
+                f"Invalid gain {gain}. Must be in the range [-1;1]."
+            )
+        # Get the layout and the pattern
+        layout = microAO.dm_layouts.get_layout(layout_name)
+        if pattern_name not in layout["presets"]:
+            raise Exception(
+                f"A pattern with name '{pattern_name}' does not exist."
+            )
+        pattern = np.array(layout["presets"][pattern_name])
+        # Convert pattern to the range [-1, 1]
+        pattern = np.interp(pattern, (0, 1), (-1, 1))
+        # Apply gain
+        pattern = pattern * gain
+        # Convert back to the range [0, 1]
+        pattern = np.interp(pattern, (-1, 1), (0, 1))
+        return pattern
+
+    @cockpit.util.threads.callInNewThread
+    def exercise(self, gain, pattern_hold_time, repeats):
+        pattern = self._generate_exercise_pattern(gain)
+        pattern_inverted = self._generate_exercise_pattern(-gain)
+        for _ in range(repeats):
+            self.send(pattern)
+            time.sleep(pattern_hold_time * 1e-3)
+            self.send(pattern_inverted)
+            time.sleep(pattern_hold_time * 1e-3)
+        self.reset()

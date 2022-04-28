@@ -539,6 +539,10 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         visPhaseButton = wx.Button(panel_calibration, label="Visualise Phase")
         visPhaseButton.Bind(wx.EVT_BUTTON, self.OnVisualisePhase)
 
+        # Exercise the adaptive element
+        exerciseAdaptiveElementButton = wx.Button(panel_calibration, label="Exercise adaptive element")
+        exerciseAdaptiveElementButton.Bind(wx.EVT_BUTTON, self.OnExercise)
+
         # Button to set calibration parameters
         calibrationParametersButton = wx.Button(panel_calibration, label="Calibration parameters")
         calibrationParametersButton.Bind(wx.EVT_BUTTON, self.OnCalibrationParameters)
@@ -619,6 +623,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         sizer_calibration = wx.BoxSizer(wx.VERTICAL)
         for btn in [
             visPhaseButton,
+            exerciseAdaptiveElementButton,
             calibrationParametersButton,
             calibrationGetDataButton,
             calibrationCalcButton,
@@ -1321,3 +1326,24 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             choice = event.GetEventObject()
             choice.SetSelection(choice.FindString(self.ao_trigger[1].name))
             raise e
+
+    def OnExercise(self, event: wx.CommandEvent):
+        inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
+            self,
+            "Set exercise parameters",
+            [
+                "Gain",
+                "Pattern hold time [ms]",
+                "Repeats"
+            ],
+            (
+                0.0,
+                10,
+                1,
+            ),
+        )
+        self._device.exercise(
+            float(inputs[0]),
+            float(inputs[1]),
+            int(inputs[2])
+        )
