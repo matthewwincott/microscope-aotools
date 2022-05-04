@@ -99,7 +99,7 @@ class RemoteZ():
         self._n_actuators = control_matrix.shape[0]
         self._n_modes = control_matrix.shape[1]
 
-    def calibrate1(self, zstage, zpos, output_dir=None, defocus_modes=[4,11], other_modes=np.asarray([22, 5, 6, 7, 8, 9, 10]), start_from_flat=False):
+    def calibrate1(self, zstage, zpos, output_dir=None, defocus_modes=[4,11], other_modes=np.asarray([22, 5, 6, 7, 8, 9, 10])):
         if self._n_actuators == 0:
             raise Exception(
                 "Remote focusing calibration failed because the adaptive "
@@ -108,10 +108,7 @@ class RemoteZ():
 
         mover = depot.getHandlerWithName("{}".format(zstage.name))
 
-        if start_from_flat:
-            zero_position = np.asarray(userConfig.getValue("dm_sys_flat"))
-        else:
-            zero_position = self._device.proxy.get_last_actuator_values()
+        zero_position = self._device.proxy.get_last_actuator_values()
 
         for i, z in enumerate(zpos):
             # Set modes to 0

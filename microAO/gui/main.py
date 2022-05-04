@@ -1231,16 +1231,14 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                 "Aberration range maxima",
                 "Number of measurements",
                 "Number of repeats",
-                "Noll indices",
-                "Start from flat"
+                "Noll indices"
             ],
             (
                 params["z_min"],
                 params["z_max"],
                 params["numMes"],
                 params["num_it"],
-                params["nollZernike"].tolist(),
-                params["start_from_flat"]
+                params["nollZernike"].tolist()
             ),
         )
         params["z_min"] = float(inputs[0])
@@ -1250,10 +1248,6 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         params["nollZernike"] = np.asarray(
             [int(z_ind) for z_ind in inputs[4][1:-1].split(", ")]
         )
-        if inputs[5].lower() in ["true", "t", "yes", "y", "1"]:
-            params["start_from_flat"] = True
-        elif inputs[5].lower() in ["false", "f", "no", "n", "0"]:
-            params["start_from_flat"] = False
 
     def OnDMViewer(self, event: wx.CommandEvent) -> None:
         # Try to find DM viewer window

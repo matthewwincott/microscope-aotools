@@ -179,8 +179,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             "num_it": 2,
             "z_max": 1.5,
             "z_min": -1.5,
-            "nollZernike": np.asarray([11, 22, 5, 6, 7, 8, 9, 10]),
-            "start_from_flat" : True
+            "nollZernike": np.asarray([11, 22, 5, 6, 7, 8, 9, 10])
         }
 
         # Shared state for the new image callbacks during sensorless
@@ -624,10 +623,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             "metric_calculated" : np.array(())
         }
 
-        if self.sensorless_params.get("start_from_flat", False):
-            self.sensorless_data["actuator_offset"] = self.get_system_flat()
-        else:
-            self.sensorless_data["actuator_offset"] = self.proxy.get_last_actuator_values()
+        self.sensorless_data["actuator_offset"] = self.proxy.get_last_actuator_values()
 
         logger.log.debug("Subscribing to camera events")
         # Subscribe to camera events
