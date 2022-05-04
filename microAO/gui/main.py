@@ -641,7 +641,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             applyLastPatternButton,
             metricSelectButton,
             sensorlessParametersButton,
-            sensorlessAOButton
+            sensorlessAOButton,
+            RemoteFocusButton
         ]:
             sizer_AO.Add(btn, panel_flags)
 
@@ -653,8 +654,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             saveModesButton,
             loadActuatorsButton,
             saveActuatorsButton,
-            setCurrentAsFlatButton,
-            RemoteFocusButton
+            setCurrentAsFlatButton
         ]:
 
             sizer_control.Add(widget, panel_flags)
