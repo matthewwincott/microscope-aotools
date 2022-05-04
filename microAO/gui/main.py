@@ -604,7 +604,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         DMViewButton.Bind(wx.EVT_BUTTON, self.OnDMViewer)
 
         # Button to show remote focus dialog
-        RemoteFocusButton = wx.Button(panel_control, label="Remote focus")
+        RemoteFocusButton = wx.Button(panel_AO, label="Remote focus")
         RemoteFocusButton.Bind(wx.EVT_BUTTON, self.OnRemoteFocus)
 
         panel_flags = wx.SizerFlags(0).Expand().Border(wx.LEFT|wx.RIGHT, 50)
