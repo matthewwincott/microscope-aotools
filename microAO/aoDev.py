@@ -133,8 +133,6 @@ class AdaptiveOpticsDevice(Device):
         self.last_zernike_modes = None
         # Last applied actuators values
         self.last_actuator_values = None
-        # Last applied actuators pattern
-        self.last_actuator_patterns = None
         # Last applied phase image
         self.last_phase_pattern = None
 
@@ -422,17 +420,12 @@ class AdaptiveOpticsDevice(Device):
         except Exception as e:
             raise e
 
-        self.last_actuator_patterns = patterns
         if (ttype, tmode) is not self.get_trigger():
             self.set_trigger(ttype, tmode)
 
     @Pyro4.expose
     def flush_patterns(self):
         return self.ao_element.flush_patterns()
-
-    @Pyro4.expose
-    def get_last_actuator_patterns(self):
-        return self.last_actuator_patterns
 
     @Pyro4.expose
     def set_roi(self, y0, x0, radius):
@@ -498,13 +491,6 @@ class AdaptiveOpticsDevice(Device):
         for key in self.corrections.keys():
             self.toggle_correction(key, False)
         self.refresh_corrections()
-
-    @Pyro4.expose
-    def to_flat(self):
-        _logger.info("Setting DM to flat")
-        last_ac = np.copy(self.last_actuator_values)
-        self.send(self.get_system_flat())
-        self.last_actuator_values = last_ac
 
     @Pyro4.expose
     def make_mask(self, radius):
@@ -782,130 +768,6 @@ class AdaptiveOpticsDevice(Device):
             )
         )
         return strehl_ratio
-
-    @Pyro4.expose
-    @_with_wavefront_camera_ttype_software
-    def calibrate(self, numPokeSteps=5, noZernikeModes=69, threshold=0.005):
-        self.wavefront_camera.set_exposure_time(0.1)
-        # Ensure an ROI is defined so a masked image is obtained
-        try:
-            assert np.any(self.roi) is not None
-        except:
-            raise Exception(
-                "No region of interest selected. Please select a region of interest"
-            )
-
-        test_image = np.asarray(self.acquire())
-        (y, x) = np.shape(test_image)
-
-        # Ensure the conditions for phase unwrapping are in satisfied
-        self.check_unwrap_conditions(test_image)
-
-        nzernike = self.numActuators
-
-        poke_min = 0.25
-        poke_max = 0.75
-        pokeSteps = np.linspace(poke_min, poke_max, numPokeSteps)
-        noImages = numPokeSteps * (np.shape(np.where(self.pupil_ac == 1))[1])
-
-        assert x == y
-        edge_mask = np.sqrt(
-            (np.arange(-x / 2.0, x / 2.0) ** 2).reshape((x, 1))
-            + (np.arange(-x / 2.0, x / 2.0) ** 2)
-        ) < ((x / 2.0) - 3)
-        all_zernikeModeAmp = []
-        all_pokeAmps = []
-
-        actuator_values = np.zeros((noImages, nzernike)) + 0.5
-        for ii in range(nzernike):
-            for jj in range(numPokeSteps):
-                actuator_values[(numPokeSteps * ii) + jj, ii] = pokeSteps[jj]
-
-        curr_calc = 0
-        for ac in range(self.numActuators):
-            image_stack_cropped = np.zeros((numPokeSteps, y, x))
-            unwrapped_stack_cropped = np.zeros((numPokeSteps, y, x))
-
-            # Determine if the current actuator is in the pupil
-            if self.pupil_ac[ac] == 1:
-                pokeAc = np.zeros(self.numActuators)
-                zernikeModeAmp_list = []
-
-                for im in range(numPokeSteps):
-                    curr_calc += 1
-                    try:
-                        self.send(actuator_values[(curr_calc - 1), :])
-                    except:
-                        _logger.info("Actuator values being sent:")
-                        _logger.info(actuator_values[(curr_calc - 1), :])
-                        _logger.info("Shape of actuator vector:")
-                        _logger.info(
-                            np.shape(actuator_values[(curr_calc - 1), :])
-                        )
-                    _logger.info(
-                        "Frame %i/%i captured" % (curr_calc, noImages)
-                    )
-
-                    # Acquire the current poke image
-                    poke_image = self.acquire()
-                    image_stack_cropped[im, :, :] = poke_image
-
-                    # Unwrap the current image
-                    image_unwrap = unwrap_method[self.phase_method](poke_image)
-                    unwrapped_stack_cropped[im, :, :] = image_unwrap
-
-                    # Check the current phase map for discontinuities which can interfere with the Zernike mode measurements
-                    diff_image = (
-                        abs(np.diff(np.diff(image_unwrap, axis=1), axis=0))
-                        * edge_mask[:-1, :-1]
-                    )
-                    no_discontinuities = np.shape(
-                        np.where(diff_image > 2 * np.pi)
-                    )[1]
-                    if no_discontinuities > (x * y) / 1000.0:
-                        _logger.info(
-                            "Unwrap image %d/%d contained discontinuites"
-                            % (curr_calc, noImages)
-                        )
-                        _logger.info(
-                            "Zernike modes %d/%d not calculated"
-                            % (curr_calc, noImages)
-                        )
-                    else:
-                        pokeAc[ac] = pokeSteps[im]
-                        all_pokeAmps.append(pokeAc.tolist())
-                        _logger.info(
-                            "Calculating Zernike modes %d/%d..."
-                            % (curr_calc, noImages)
-                        )
-
-                    curr_amps = aoAlg.get_zernike_modes(
-                        image_unwrap, noZernikeModes
-                    )
-                    zernikeModeAmp_list.append(curr_amps)
-                    all_zernikeModeAmp.append(curr_amps)
-            zernikeModeAmp = np.asarray(zernikeModeAmp_list)
-            np.save("image_stack_cropped_ac_%i" % ac, image_stack_cropped)
-            np.save("unwrap_stack_cropped_ac_%i" % ac, unwrapped_stack_cropped)
-            np.save("zernikeModeAmp_ac_%i" % ac, zernikeModeAmp)
-
-        all_zernikeModeAmp = np.asarray(all_zernikeModeAmp)
-        all_pokeAmps = np.asarray(all_pokeAmps)
-        np.save("all_zernikeModeAmp", all_zernikeModeAmp)
-        np.save("all_pokeAmps", all_pokeAmps)
-        self.reset()
-
-        _logger.info("Computing Control Matrix")
-        self.controlMatrix = aoAlg.create_control_matrix(
-            zernikeAmps=all_zernikeModeAmp,
-            pokeSteps=all_pokeAmps,
-            numActuators=self.numActuators,
-            pupil_ac=self.pupil_ac,
-            threshold=threshold,
-        )
-        _logger.info("Control Matrix computed")
-        np.save("control_matrix", self.controlMatrix)
-        return self.controlMatrix
 
     # This method of wavefront flattening should be used when the wavefront sensor defined in __init__ is being used to
     # directly measure the phase wavefront.
@@ -1189,74 +1051,6 @@ class AdaptiveOpticsDevice(Device):
         return assay
 
     @Pyro4.expose
-    def correct_direct_sensing(self, image, z_modes_ignore=None):
-        # Ensure an ROI is defined so a masked image is obtained
-        try:
-            assert np.any(self.roi) is not None
-        except:
-            raise Exception(
-                "No region of interest selected. Please select a region of interest"
-            )
-
-        # Ensure the conditions for phase unwrapping are in satisfied
-        self.check_unwrap_conditions()
-
-        # Check dimensions match
-        numActuators, nzernike = np.shape(self.get_controlMatrix())
-        try:
-            assert numActuators == self.numActuators
-        except:
-            raise Exception(
-                "Control Matrix dimension 0 axis and number of "
-                "actuators do not match."
-            )
-        # Set which modes to ignore while flattening
-        if np.any(z_modes_ignore) is None:
-            # By default, ignore piston, tip and tilt
-            z_modes_ignore = np.asarray(range(nzernike)) > 2
-        else:
-            # If we have more Zernike modes to ignore than in the control matrix, crop to the correct number
-            if len(z_modes_ignore) > nzernike:
-                z_modes_ignore = z_modes_ignore[:nzernike]
-            # If we have fewer Zernike modes to ignore than in the control matrix, pad with zeros (i.e. ignore all the
-            # Zernike modes the user didn't specify)
-            elif len(z_modes_ignore) < nzernike:
-                z_modes_ignore = np.pad(
-                    z_modes_ignore,
-                    (0, len(z_modes_ignore) - nzernike),
-                    mode="constant",
-                    constant_values=0,
-                )
-            else:
-                pass
-
-        x, y = image.shape
-        assert x == y
-
-        correction_wavefront = unwrap_method[self.phase_method](image)
-        edge_mask = np.sqrt(
-            (np.arange(-x / 2.0, x / 2.0) ** 2).reshape((x, 1))
-            + (np.arange(-x / 2.0, x / 2.0) ** 2)
-        ) < ((x / 2.0) - 3)
-        diff_correction_wavefront = (
-            abs(np.diff(np.diff(correction_wavefront, axis=1), axis=0))
-            * edge_mask[:-1, :-1]
-        )
-        no_discontinuities_correction = np.shape(
-            np.where(diff_correction_wavefront > 2 * np.pi)
-        )[1]
-        if no_discontinuities_correction > ((x * y) / 1000.0):
-            _logger.info("Too many discontinuities in wavefront unwrap")
-            return
-        else:
-            z_amps = self.getzernikemodes(correction_wavefront, nzernike)
-            z_amps = z_amps * z_modes_ignore
-            flat_actuators = self.set_phase(
-                (-1.0 * z_amps), offset=self.last_actuator_patterns
-            )
-            return z_amps, flat_actuators
-
-    @Pyro4.expose
     def measure_metric(self, image, **kwargs):
         metric = aoAlg.measure_metric(image, **kwargs)
         return metric
@@ -1295,29 +1089,3 @@ class AdaptiveOpticsDevice(Device):
         else:
             ac_pos_correcting = self.set_phase(z_amps, offset=offset)
         return amp_to_correct, ac_pos_correcting, metrics
-
-    @Pyro4.expose
-    def correct_sensorless_all_modes(
-        self,
-        full_image_stack,
-        full_zernike_applied,
-        nollZernike,
-        wavelength,
-        NA,
-        pixel_size,
-        offset=None,
-    ):
-        # May change this function later if we hand control of other cameras to the composite device
-        coef = aoAlg.get_zernike_modes_sensorless(
-            full_image_stack,
-            full_zernike_applied,
-            nollZernike=nollZernike,
-            wavelength=wavelength,
-            NA=NA,
-            pixel_size=pixel_size,
-        )
-        if np.any(offset) is None:
-            ac_pos_correcting = self.set_phase(coef)
-        else:
-            ac_pos_correcting = self.set_phase(coef, offset=offset)
-        return coef, ac_pos_correcting
