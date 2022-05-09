@@ -580,10 +580,6 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         applySysFlat = wx.Button(panel_AO, label="Apply system flat")
         applySysFlat.Bind(wx.EVT_BUTTON, self.OnSystemFlat)
 
-        # Apply last actuator values
-        applyLastPatternButton = wx.Button(panel_AO, label="Apply last pattern")
-        applyLastPatternButton.Bind(wx.EVT_BUTTON, self.OnApplyLastPattern)
-
         # Button to set metric
         metricSelectButton = wx.Button(panel_AO, label="Set sensorless metric")
         metricSelectButton.Bind(wx.EVT_BUTTON, self.OnSetMetric)
@@ -639,7 +635,6 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         for btn in [
             resetButton,
             applySysFlat,
-            applyLastPatternButton,
             metricSelectButton,
             sensorlessParametersButton,
             sensorlessAOButton,
@@ -964,10 +959,6 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def OnSystemFlat(self, event: wx.CommandEvent) -> None:
         del event
         self._device.applySysFlat()
-
-    def OnApplyLastPattern(self, event: wx.CommandEvent) -> None:
-        del event
-        self._device.applyLastPattern()
 
     def OnSensorlessAO(self, event: wx.CommandEvent) -> None:
         # Perform sensorless AO but if there is more than one camera

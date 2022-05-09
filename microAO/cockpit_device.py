@@ -591,10 +591,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.proxy.toggle_correction("system_flat", True)
         self.proxy.refresh_corrections()
 
-    def applyLastPattern(self):
-        last_ac = self.proxy.get_last_actuator_values()
-        self.send(last_ac)
-
     def correctSensorlessSetup(self, camera):
         logger.log.info("Performing sensorless AO setup")
         # Note: Default is to correct Primary and Secondary Spherical

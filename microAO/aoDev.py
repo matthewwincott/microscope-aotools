@@ -495,11 +495,9 @@ class AdaptiveOpticsDevice(Device):
     @Pyro4.expose
     def reset(self):
         _logger.info("Resetting DM")
-        last_ac = np.copy(self.last_actuator_values)
         for key in self.corrections.keys():
             self.toggle_correction(key, False)
         self.refresh_corrections()
-        self.last_actuator_values = last_ac
 
     @Pyro4.expose
     def to_flat(self):
