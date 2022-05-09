@@ -129,8 +129,6 @@ class AdaptiveOpticsDevice(Device):
             self.set_system_flat(system_flat)
         else:
             self.set_system_flat(np.zeros(self.numActuators) + 0.5)
-        # Last set corrections
-        self.last_corrections = {}
         # Last applied zenrike  modes
         self.last_zernike_modes = None
         # Last applied actuators values
@@ -498,7 +496,9 @@ class AdaptiveOpticsDevice(Device):
     def reset(self):
         _logger.info("Resetting DM")
         last_ac = np.copy(self.last_actuator_values)
-        self.send(np.zeros(self.numActuators) + 0.5)
+        for key in self.corrections.keys():
+            self.toggle_correction(key, False)
+        self.refresh_corrections()
         self.last_actuator_values = last_ac
 
     @Pyro4.expose
@@ -927,6 +927,10 @@ class AdaptiveOpticsDevice(Device):
         # Ensure the conditions for phase unwrapping are in satisfied
         self.check_unwrap_conditions()
 
+        # Ensure all corrections are disabled
+        for key in self.corrections.keys():
+            self.corrections[key]["enabled"] = False
+
         # Check dimensions match
         numActuators, nzernike = np.shape(self.get_controlMatrix())
         try:
@@ -1047,13 +1051,15 @@ class AdaptiveOpticsDevice(Device):
 
     @Pyro4.expose
     def get_actuator_pos_from_modes(self, applied_z_modes, offset=None):
-        try:
-            actuator_pos = aoAlg.ac_pos_from_zernike(
-                applied_z_modes, self.numActuators
-            )
-        except Exception as err:
-            _logger.info(err)
-            raise err
+        actuator_pos = np.zeros(self.numActuators)
+        if np.any(applied_z_modes > 0.0):
+            try:
+                actuator_pos = aoAlg.ac_pos_from_zernike(
+                    applied_z_modes, self.numActuators
+                )
+            except Exception as err:
+                _logger.info(err)
+                raise err
 
         if np.any(offset) is None:
             actuator_pos += 0.5
@@ -1067,15 +1073,13 @@ class AdaptiveOpticsDevice(Device):
         if not filter:
             corrections = self.corrections.copy()
         else:
-            corrections = {key:val for (key,val) in self.corrections.copy().items() if key in filter}
+            corrections = {
+                key:value
+                for key, value in self.corrections.copy().items()
+                if key in filter
+            }
 
         return corrections
-
-    @Pyro4.expose
-    def add_correction(self, name, modes=None, actuator_values=None):
-        self.corrections[name] = {}
-        self.corrections[name]["modes"] = modes
-        self.corrections[name]["actuator_values"] = actuator_values
 
     @Pyro4.expose
     def remove_correction(self, name):
@@ -1083,8 +1087,16 @@ class AdaptiveOpticsDevice(Device):
 
     @Pyro4.expose
     def set_correction(self, name, modes=None, actuator_values=None):
-        self.remove_correction(name)
-        self.add_correction(name, modes, actuator_values)
+        if name not in self.corrections:
+            # Initialise new correction
+            self.corrections[name] = {}
+            self.corrections[name]["enabled"] = False
+        self.corrections[name]["modes"] = modes
+        self.corrections[name]["actuator_values"] = actuator_values
+
+    @Pyro4.expose
+    def toggle_correction(self, name, enable):
+        self.corrections[name]["enabled"] = enable
 
     @Pyro4.expose
     def calc_phase_from_corrections(self, corrections):       
@@ -1104,66 +1116,47 @@ class AdaptiveOpticsDevice(Device):
         return total_corrections_phase, total_corrections_offset
 
     @Pyro4.expose
-    def calc_shape(self, corrections_list=[]):
+    def calc_shape(self):
         # Filter required corrections
-        corrections = {key:val for key, val in self.corrections.items() if key in corrections_list}
+        corrections = {
+            key: value
+            for key, value in self.corrections.items()
+            if value["enabled"]
+        }
 
-        # Get phase and offset from corrections        
+        # Get phase and offset from corrections
         total_corrections_phase, total_corrections_offset = self.calc_phase_from_corrections(corrections)
 
         # Get actuator values from corrections
-        actuator_pos = self.get_actuator_pos_from_modes(total_corrections_phase, total_corrections_offset)
-
-        return actuator_pos, corrections
+        return self.get_actuator_pos_from_modes(total_corrections_phase, total_corrections_offset)
 
     @Pyro4.expose
-    def apply_corrections(self, corrections_list=[]):
+    def apply_corrections(self):
         # Get actuator positions and corrections
-        actuator_pos, corrections = self.calc_shape(corrections_list)
+        actuator_pos = self.calc_shape()
 
         # Send to device
         self.send(actuator_pos)
 
-        # Store last corrections
-        self.last_corrections = corrections.copy()
-
-        return actuator_pos, corrections
+        return actuator_pos
 
     @Pyro4.expose
-    def get_last_corrections(self):
-        return self.last_corrections.copy()
+    def refresh_corrections(self):
+        """Apply the currently enabled corrections."""
+        return self.set_phase()
 
     @Pyro4.expose
-    def get_last_corrections_list(self):
-        return [key for key, value in self.last_corrections.items()]
-
-    @Pyro4.expose
-    def refresh_corrections(self, corrections=None):
-        """ Refresh corrections. Ensure named corrections are applied if specified.
-        """
-        # Get list of last applied corrections
-        corrections_list = self.get_last_corrections_list()
-
-        # Add specified corrections
-        if corrections is not None:
-            corrections_list = list(set(corrections_list + corrections))
-
-        # Apply corrections
-        actuator_pos, corrections_applied = self.apply_corrections(corrections_list)
-
-        return actuator_pos, corrections_applied
-
-    @Pyro4.expose
-    def set_phase(self, applied_z_modes, offset=None, corrections=[]):
+    def set_phase(self, applied_z_modes=None, offset=None):
         # Set applied modes and offset as default correction
-        self.set_correction('default', modes=applied_z_modes)
-        corrections = list(set(corrections + ['default']))
+        self.set_correction(
+            "default",
+            modes=applied_z_modes,
+            actuator_values=offset
+        )
+        self.toggle_correction("default", True)
 
-        if offset is not None:
-            self.set_correction('offset', actuator_values=offset)
-            corrections = list(set(corrections + ['offset']))
         # Apply corrections
-        actuator_pos, _ = self.apply_corrections(corrections)
+        actuator_pos = self.apply_corrections()
 
         # Record last applied modes
         self.last_zernike_modes = applied_z_modes
@@ -1175,6 +1168,10 @@ class AdaptiveOpticsDevice(Device):
     def assess_character(self, modes_tba=None):
         # Ensure the conditions for phase unwrapping are in satisfied
         self.check_unwrap_conditions()
+
+        # Ensure all corrections are disabled
+        for key in self.corrections.keys():
+            self.corrections[key]["enabled"] = False
 
         if modes_tba is None:
             modes_tba = self.get_controlMatrix().shape[1]

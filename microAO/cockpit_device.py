@@ -588,8 +588,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.proxy.reset()
 
     def applySysFlat(self):
-        sys_flat_values = self.get_system_flat()
-        self.send(sys_flat_values)
+        self.proxy.toggle_correction("system_flat", True)
+        self.proxy.refresh_corrections()
 
     def applyLastPattern(self):
         last_ac = self.proxy.get_last_actuator_values()
@@ -620,10 +620,16 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             "sensorless_correct_coef" : np.zeros(n_modes),          # Measured aberrations
             "z_steps" : np.linspace(self.sensorless_params["z_min"], self.sensorless_params["z_max"], self.sensorless_params["numMes"]),
             "zernike_applied" : np.zeros((0, n_modes)), # Array of all z aberrations to apply during experiment
-            "metric_calculated" : np.array(())
+            "metric_calculated" : np.array(()),
+            "originally_enabled_corrections": []
         }
 
         self.sensorless_data["actuator_offset"] = self.proxy.get_last_actuator_values()
+
+        # Disable all corrections (will be restored at the end)
+        for correction_name in [key for key, value in self.proxy.get_corrections().items() if value["enabled"]]:
+            self.sensorless_data["originally_enabled_corrections"].append(correction_name)
+            self.proxy.toggle_correction(correction_name, False)
 
         logger.log.debug("Subscribing to camera events")
         # Subscribe to camera events
@@ -766,12 +772,15 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 "Actuator positions applied: %s", self.sensorless_data["actuator_offset"]
             )
 
-            # Set final correction
-            self.send(self.sensorless_data["actuator_offset"])
-
             # Record AO correction
             ao_correction = self.sensorless_data["sensorless_correct_coef"] * -1.0
             self.set_correction("sensorless", modes=ao_correction)
+
+            # Restore the original corrections and enable the sensorless one
+            for correction_name in self.sensorless_data["originally_enabled_corrections"]:
+                self.proxy.toggle_correction(correction_name, True)
+            self.proxy.toggle_correction("sensorless", True)
+            self.proxy.refresh_corrections()
 
         # Add current correction to stack
         ao_correction = self.sensorless_data["sensorless_correct_coef"] * -1.0
@@ -885,17 +894,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         else:
             raise TimeoutError("Camera capture timed out")
 
-    def get_system_flat(self):
-        sys_flat = np.asarray(userConfig.getValue("dm_sys_flat"))
-
-        # Check system flat is defined
-        if not np.any(sys_flat):
-            sys_flat = None
-
-        logger.log.warn("System flat is not defined")
-
-        return sys_flat
-    
     def set_system_flat(self, values):
         # Set in cockpit user config
         userConfig.setValue("dm_sys_flat", np.ndarray.tolist(values))
@@ -903,30 +901,19 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Set in device
         self.proxy.set_system_flat(values)
 
-    def add_correction(self, name, modes=None, actuator_values=None):
-        self.proxy.add_correction(name, modes=modes, actuator_values=actuator_values)
-
     def remove_correction(self, name):
         self.proxy.remove_correction(name)
 
     def set_correction(self, name, modes=None, actuator_values=None):
         self.proxy.set_correction(name, modes=modes, actuator_values=actuator_values)
 
-    def apply_corrections(self, corrections):
-        actuator_values, corrections_applied = self.proxy.apply_corrections(corrections)
-
-        # Publish events
-        events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
-        events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
-
-    def refresh_corrections(self, corrections=None):
-        actuator_pos, corrections_applied = self.proxy.refresh_corrections(corrections=corrections)
+    def refresh_corrections(self):
+        actuator_pos = self.proxy.refresh_corrections()
 
         # Publish events
         events.publish(PUBSUB_SET_ACTUATORS, actuator_pos)
-        events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
 
-        return actuator_pos, corrections_applied
+        return actuator_pos
 
     def send(self, actuator_values):
         # Send values to device
@@ -935,21 +922,17 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Publish events
         events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
 
-    def set_phase(self, applied_z_modes, offset=None, corrections=[]):
+    def set_phase(self, applied_z_modes, offset=None):
         # Eagerly publish phase value update
         events.publish(PUBSUB_SET_PHASE, applied_z_modes)
 
         # Send values to device
-        actuator_values = self.proxy.set_phase(applied_z_modes, offset=offset, corrections=corrections)
+        actuator_values = self.proxy.set_phase(applied_z_modes, offset=offset)
         
         # Publish actuator change
         events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
 
-        # Get last corrections and publish
-        corrections_applied  = self.proxy.get_last_corrections()
-        events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
-
-        return actuator_values, corrections_applied
+        return actuator_values
 
     def set_phase_map(self, phase_map):
         # Convert the phase map to zernike coefficients

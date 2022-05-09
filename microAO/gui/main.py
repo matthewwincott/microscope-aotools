@@ -8,7 +8,7 @@ from microAO import cockpit_device
 
 import cockpit.gui.device
 import cockpit.gui.camera.window
-from cockpit.util import logger, userConfig
+from cockpit.util import logger, userConfig, threads
 
 import microscope.devices
 
@@ -26,6 +26,7 @@ import aotools
 import typing
 import pathlib
 import json
+import time
 
 import tifffile
 
@@ -672,8 +673,32 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         tabs.Layout()
 
-        sizer_main = wx.BoxSizer(wx.VERTICAL)
+        # Corrections checkbox list
+        checklistRefreshButton = wx.Button(self, label="Refresh")
+        checklistRefreshButton.Bind(wx.EVT_BUTTON, self.OnCorrectionRefresh)
+        self.checklist_corrections = wx.CheckListBox(
+            self,
+            id=wx.ID_ANY,
+            size=wx.Size(150,-1),
+            choices=list(
+                [
+                    key
+                    for key in self._device.proxy.get_corrections().keys()
+                    if key != "default"
+                ]
+            )
+        )
+        self.checklist_corrections.Bind(
+            wx.EVT_CHECKLISTBOX,
+            self.OnCorrectionState
+        )
+        checklist_sizer = wx.BoxSizer(wx.VERTICAL)
+        checklist_sizer.Add(checklistRefreshButton, 0, wx.ALIGN_CENTRE)
+        checklist_sizer.Add(self.checklist_corrections, 1, wx.EXPAND)
+
+        sizer_main = wx.BoxSizer(wx.HORIZONTAL)
         sizer_main.Add(tabs, wx.SizerFlags(1).Expand())
+        sizer_main.Add(checklist_sizer, 0, wx.EXPAND)
         self.SetSizer(sizer_main)
 
     def _get_image_and_unwrap(self) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int]]:
@@ -868,7 +893,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             phase_unwrapped - phase_unwrapped_ref
         )
         # Set the phase difference map
-        actuators, _ = self._device.set_phase_map(
+        actuators = self._device.set_phase_map(
             -1.0 * phase_unwrapped_difference
         )
         # Check what the new phase looks like
@@ -1054,14 +1079,9 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             new_flat = np.loadtxt(fpath)
             assert (new_flat.ndim == 1 and new_flat.size <= self._device.no_actuators)
 
-            # Calculate updated actuator values using new flat
-            curr_flat = self._device.proxy.get_system_flat()
-            curr_actuator_values = self._device.proxy.get_last_actuator_values()
-            new_actuator_values = curr_actuator_values - curr_flat + new_flat
-
-            # Set new flat and update actuator values
+            # Set new flat and refresh corrections
             self._device.set_system_flat(new_flat)
-            self._device.send(new_actuator_values)
+            self._device.proxy.refresh_corrections()
 
             # Log
             logger.log.info("System flat loaded from file")
@@ -1101,7 +1121,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         try:
             values = np.loadtxt(fpath)
             assert (values.ndim == 1 and values.size <= self._device.no_actuators)
-            self._device.send(values)
+            self._device.set_phase(offset=values)
         except Exception as e:
             message = ('Error loading acuator values.')
             logger.log.error(message)
@@ -1139,7 +1159,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         try:
             values = np.loadtxt(fpath)
             assert (values.ndim == 1)
-            self._device.set_phase(values, self._device.proxy.get_system_flat())
+            self._device.set_phase(values)
         except Exception as e:
             message = ('Error loading modes. ({})'.format(e))
             logger.log.error(message)
@@ -1288,8 +1308,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def OnSetCurrentAsFlat(self, event: wx.CommandEvent) -> None:
         """ Sets current actuator values as the new flat """
         current_actuator_values = self._device.proxy.get_last_actuator_values()
-        userConfig.setValue("dm_sys_flat", np.ndarray.tolist(current_actuator_values))
-        self._device.proxy.set_system_flat(current_actuator_values)
+        self._device.set_system_flat(current_actuator_values)
 
     def OnTriggerTypeChoice(self, event: wx.CommandEvent):
         try:
@@ -1341,3 +1360,21 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             float(inputs[1]),
             int(inputs[2])
         )
+
+    def OnCorrectionRefresh(self, event: wx.CommandEvent):
+        corrections = {
+            key:value
+            for key, value in self._device.proxy.get_corrections().items()
+            if key != "default"
+        }
+        self.checklist_corrections.Set(list(corrections.keys()))
+        for index, corr_name in enumerate(corrections.keys()):
+            state = corrections[corr_name]["enabled"]
+            self.checklist_corrections.Check(index, state)
+
+    def OnCorrectionState(self, event: wx.CommandEvent):
+        index = event.GetInt()
+        name = self.checklist_corrections.GetString(index)
+        state = self.checklist_corrections.IsChecked(index)
+        self._device.proxy.toggle_correction(name, state)
+        self._device.proxy.refresh_corrections()

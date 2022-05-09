@@ -481,7 +481,7 @@ class RemoteFocusControl(wx.Frame):
             self.listbox.AppendItems("{} ({})".format(d["z"],d["datatype"]))
 
     def OnRemoteZ(self, e):
-        actuator_pos, corrections_applied = self._device.remotez.set_z(
+        actuator_pos = self._device.remotez.set_z(
             self.remotezSlider.GetValue(),
             self.datatype_control.GetStringSelection().lower()
         )
@@ -491,8 +491,6 @@ class RemoteFocusControl(wx.Frame):
 
         # Publish events
         events.publish(PUBSUB_SET_ACTUATORS, actuator_pos)
-        events.publish(PUBSUB_APPLY_CORRECTIONS, corrections_applied)
-
 
     def OnRemoteZStack(self, e):
         # Get parameters

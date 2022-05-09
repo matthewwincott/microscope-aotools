@@ -111,9 +111,6 @@ class RemoteZ():
         zero_position = self._device.proxy.get_last_actuator_values()
 
         for i, z in enumerate(zpos):
-            # Set modes to 0
-            self._device.set_phase(np.zeros(self._n_modes), zero_position)
-
             # Calculate motion time and move
             z_prev = zstage.getPosition()
             motion_time, stabilise_time = mover.getMovementTime(z_prev,z)
@@ -476,14 +473,9 @@ class RemoteZ():
             # No lookup data
             pass
 
-        # Get list of last applied corrections
-        corrections_list = self._device.proxy.get_last_corrections_list()
-
-        # Add remotez correction
-        corrections_list = list(set(corrections_list + ["remotez"]))
-
         # Get shape
-        actuator_pos, _ = self._device.proxy.calc_shape(corrections_list)
+        self._device.proxy.toggle_correction("remotez", True)
+        actuator_pos = self._device.proxy.calc_shape()
 
         # Restore original remotez correction
         if correction_remotez_original:
@@ -492,6 +484,9 @@ class RemoteZ():
                 modes=correction_remotez_original["remotez"]["modes"],
                 actuator_values=correction_remotez_original["remotez"]["actuator_values"]
             )
+            self._device.proxy.toggle_correction("remotez", correction_remotez_original["remotez"]["enabled"])
+        else:
+            self._device.proxy.toggle_correction("remotez", False)
 
         return actuator_pos
 
@@ -515,7 +510,7 @@ class RemoteZ():
                 values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_actuators)])
                 self._device.set_correction("remotez", actuator_values=values)
 
-            actuator_pos, corrections = self._device.refresh_corrections(corrections=["remotez"])
+            actuator_pos = self._device.refresh_corrections()
 
             self._position = z
 
@@ -523,7 +518,7 @@ class RemoteZ():
             # No lookup data
             pass
 
-        return actuator_pos, corrections
+        return actuator_pos
 
     def get_z(self):
         return self._position
