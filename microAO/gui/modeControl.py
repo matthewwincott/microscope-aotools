@@ -166,7 +166,7 @@ class _Mode(wx.Panel):
 
 class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
     def __init__(self, parent, device):
-        wx.lib.scrolledpanel.ScrolledPanel.__init__(self, parent, -1)
+        super().__init__(parent)
 
         # Set attributes
         self._device = device
@@ -174,26 +174,24 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         self._n_modes = control_matrix.shape[1]
 
         # Create root panel and sizer
-        root_panel = wx.Panel(self)
-        root_sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer = wx.BoxSizer(wx.VERTICAL)
 
         # Reset button
-        reset_btn = wx.Button(root_panel, label="reset")
+        reset_btn = wx.Button(self, label="Reset")
         reset_btn.Bind(wx.EVT_BUTTON, self.OnReset)
-        root_sizer.Add(reset_btn)
+        sizer.Add(reset_btn, 0, wx.ALL, 5)
 
         # Filter modes control
-        filter_modes_lbl = wx.StaticText(root_panel, label="Mode filter")
-        self.filter_modes = FilterModesCtrl(root_panel)
+        filter_modes_lbl = wx.StaticText(self, label="Mode filter")
+        self.filter_modes = FilterModesCtrl(self)
         self.filter_modes.ChangeValue("{}-{}".format(1, self._n_modes))
         self.filter_modes.Bind(wx.EVT_TEXT, self.OnFilterModes)
         hbox = wx.BoxSizer(wx.HORIZONTAL)
         hbox.Add(filter_modes_lbl, wx.SizerFlags().Centre().Border(wx.RIGHT, 8))
         hbox.Add(self.filter_modes, wx.SizerFlags().Centre())
-        root_sizer.Add(hbox, wx.SizerFlags().Border(wx.BOTTOM, 8))
+        sizer.Add(hbox, wx.SizerFlags().Border(wx.BOTTOM, 8))
 
         # Set headings
-        heading_panel = wx.Panel(root_panel)
         heading_sizer = wx.BoxSizer(wx.HORIZONTAL)
 
         headings = [
@@ -208,13 +206,10 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         flags = wx.SizerFlags().Centre()
 
         for heading in headings:
-            heading_widget = wx.StaticText(heading_panel, label=heading[0], size=wx.Size(heading[1],-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
+            heading_widget = wx.StaticText(self, label=heading[0], size=wx.Size(heading[1],-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
             heading_widget.SetFont(font)
-            heading_sizer.Add(heading_widget, flags)
-
-        heading_panel.SetSizer(heading_sizer)
-        
-        root_sizer.Add(heading_panel, flags=wx.SizerFlags().Border(wx.BOTTOM,8))
+            heading_sizer.Add(heading_widget, 0, wx.CENTER | wx.BOTTOM, 8)
+        sizer.Add(heading_sizer, 0, wx.BOTTOM, 8)
 
         # Add control per mode
         modes = np.zeros(self._n_modes)
@@ -224,27 +219,27 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
 
         self._mode_controls = []
         for i, mode in enumerate(modes):
-            mode_control = _Mode(root_panel, id=i, value=mode)
+            mode_control = _Mode(self, id=i, value=mode)
             mode_control.Bind(EVT_MODE_CHANGED, self.OnMode)
             self._mode_controls.append(mode_control)
-            root_sizer.Add(mode_control)
+            sizer.Add(mode_control, 0)
 
         # Show only filtered modes
         self.FilterModes()
-
-        # Set root sizer
-        root_panel.SetSizer(root_sizer)
         
-        # Set frame sizer
-        frame_sizer = wx.BoxSizer(wx.VERTICAL)
-        frame_sizer.Add(root_panel, wx.SizerFlags().Expand().Border(wx.ALL, 10))
-        self.SetSizerAndFit(frame_sizer)
+        # Set sizer and finalise layout
+        self.SetSizerAndFit(sizer)
+        self.SetupScrolling()
+        self.Layout()
 
         # Subscribe to pubsub events
         events.subscribe(PUBSUB_SET_PHASE, self.HandleSetPhase)
 
         # Bind close event
         self.Bind(wx.EVT_CLOSE, self.OnClose)
+
+        # Initialise the mode control correction
+        self._device.set_correction("mode control")
 
     def FilterModes(self):
         # Show only filtered modes
@@ -254,11 +249,10 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
                 control.Show()
             else:
                 control.Hide()
-            
-        self.Layout()
 
     def OnFilterModes(self, evt):
         self.FilterModes()
+        self.SetupScrolling()
 
     def OnMode(self, evt):
         self.RefreshModes()
@@ -287,7 +281,8 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
     
     def RefreshModes(self):
         modes = self.GetModes()
-        self._device.set_phase(modes)
+        self._device.set_correction("mode control", modes)
+        self._device.refresh_corrections()
 
     def Reset(self, quiet=False):
         for mode_control in self._mode_controls:
@@ -302,15 +297,14 @@ class ModesControl(wx.Frame):
     def __init__(self, parent, device):
         super().__init__(parent)
         self._panel = _ModesPanel(self, device)
-        self._panel.SetupScrolling()
         self._sizer = wx.BoxSizer(wx.VERTICAL)
-        self._sizer.Add(self._panel)
-        self.SetSizerAndFit(self._sizer)
+        self._sizer.Add(self._panel, 1, wx.EXPAND)
+        self.SetSizer(self._sizer)
+        self.SetMinSize(wx.Size(650, 300))
+        self.SetSize(wx.Size(650, 650))
         self.SetTitle('DM mode control')
-        
         self.Bind(wx.EVT_CLOSE, self.OnClose)
     
     def OnClose(self, evt):
         self._panel.OnClose()
-
         evt.Skip()
