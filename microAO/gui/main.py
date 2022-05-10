@@ -5,10 +5,12 @@ from microAO.gui.remoteFocus import RemoteFocusControl
 from microAO.gui.sensorlessViewer import SensorlessResultsViewer
 from microAO.gui.DMViewer import DMViewer
 from microAO import cockpit_device
+import microAO.events
 
+import cockpit.events
 import cockpit.gui.device
 import cockpit.gui.camera.window
-from cockpit.util import logger, userConfig, threads
+from cockpit.util import logger, userConfig
 
 import microscope.devices
 
@@ -26,7 +28,6 @@ import aotools
 import typing
 import pathlib
 import json
-import time
 
 import tifffile
 
@@ -669,26 +670,21 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         tabs.Layout()
 
         # Corrections checkbox list
-        checklistRefreshButton = wx.Button(self, label="Refresh")
-        checklistRefreshButton.Bind(wx.EVT_BUTTON, self.OnCorrectionRefresh)
         self.checklist_corrections = wx.CheckListBox(
             self,
             id=wx.ID_ANY,
             size=wx.Size(150,-1),
-            choices=list(
-                [
-                    key
-                    for key in self._device.proxy.get_corrections().keys()
-                    if key != "default"
-                ]
-            )
+            choices=sorted(self._device.proxy.get_corrections().keys())
         )
         self.checklist_corrections.Bind(
             wx.EVT_CHECKLISTBOX,
             self.OnCorrectionState
         )
+        cockpit.events.subscribe(
+            microAO.events.PUBUSB_CHANGED_CORRECTION,
+            self.OnCorrectionChange
+        )
         checklist_sizer = wx.BoxSizer(wx.VERTICAL)
-        checklist_sizer.Add(checklistRefreshButton, 0, wx.ALIGN_CENTRE)
         checklist_sizer.Add(self.checklist_corrections, 1, wx.EXPAND)
 
         sizer_main = wx.BoxSizer(wx.HORIZONTAL)
@@ -1072,7 +1068,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
             # Set new flat and refresh corrections
             self._device.set_system_flat(new_flat)
-            self._device.proxy.refresh_corrections()
+            self._device.refresh_corrections()
 
             # Log
             logger.log.info("System flat loaded from file")
@@ -1352,20 +1348,24 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             int(inputs[2])
         )
 
-    def OnCorrectionRefresh(self, event: wx.CommandEvent):
-        corrections = {
-            key:value
-            for key, value in self._device.proxy.get_corrections().items()
-            if key != "default"
-        }
-        self.checklist_corrections.Set(list(corrections.keys()))
-        for index, corr_name in enumerate(corrections.keys()):
-            state = corrections[corr_name]["enabled"]
-            self.checklist_corrections.Check(index, state)
-
     def OnCorrectionState(self, event: wx.CommandEvent):
         index = event.GetInt()
         name = self.checklist_corrections.GetString(index)
         state = self.checklist_corrections.IsChecked(index)
-        self._device.proxy.toggle_correction(name, state)
-        self._device.proxy.refresh_corrections()
+        self._device.toggle_correction(name, state)
+        self._device.refresh_corrections()
+    
+    def OnCorrectionChange(self, name, state):
+        items = {
+            self.checklist_corrections.GetString(i):self.checklist_corrections.IsChecked(i)
+            for i in range(self.checklist_corrections.GetCount())
+        }
+        # Add/update the correction
+        items[name] = state
+        # Update widget
+        self.checklist_corrections.Set(sorted(items.keys()))
+        for i in range(self.checklist_corrections.GetCount()):
+            self.checklist_corrections.Check(
+                i,
+                items[self.checklist_corrections.GetString(i)]
+            )

@@ -474,7 +474,7 @@ class RemoteZ():
             pass
 
         # Get shape
-        self._device.proxy.toggle_correction("remotez", True)
+        self._device.toggle_correction("remotez", True)
         actuator_pos = self._device.proxy.calc_shape()
 
         # Restore original remotez correction
@@ -484,9 +484,9 @@ class RemoteZ():
                 modes=correction_remotez_original["remotez"]["modes"],
                 actuator_values=correction_remotez_original["remotez"]["actuator_values"]
             )
-            self._device.proxy.toggle_correction("remotez", correction_remotez_original["remotez"]["enabled"])
+            self._device.toggle_correction("remotez", correction_remotez_original["remotez"]["enabled"])
         else:
-            self._device.proxy.toggle_correction("remotez", False)
+            self._device.toggle_correction("remotez", False)
 
         return actuator_pos
 

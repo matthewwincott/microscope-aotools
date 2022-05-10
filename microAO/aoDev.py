@@ -486,13 +486,6 @@ class AdaptiveOpticsDevice(Device):
         return
 
     @Pyro4.expose
-    def reset(self):
-        _logger.info("Resetting DM")
-        for key in self.corrections.keys():
-            self.toggle_correction(key, False)
-        self.refresh_corrections()
-
-    @Pyro4.expose
     def make_mask(self, radius):
         self.mask = aoAlg.make_mask(radius)
         return self.mask
@@ -787,10 +780,6 @@ class AdaptiveOpticsDevice(Device):
         # Ensure the conditions for phase unwrapping are in satisfied
         self.check_unwrap_conditions()
 
-        # Ensure all corrections are disabled
-        for key in self.corrections.keys():
-            self.corrections[key]["enabled"] = False
-
         # Check dimensions match
         numActuators, nzernike = np.shape(self.get_controlMatrix())
         try:
@@ -822,7 +811,7 @@ class AdaptiveOpticsDevice(Device):
 
         best_flat_actuators = np.zeros(numActuators) + 0.5
         best_z_amps_corrected = np.zeros(nzernike)
-        self.send(best_flat_actuators)
+        self.set_phase(offset=best_flat_actuators)
         # Get a measure of the RMS phase error of the uncorrected wavefront
         # The corrected wavefront should be better than this
         image = self.acquire()
@@ -904,9 +893,9 @@ class AdaptiveOpticsDevice(Device):
                 _logger.info("Wavefront error worse than before")
             else:
                 _logger.info("No improvement in Wavefront error")
-            self.send(best_flat_actuators)
+            self.set_phase(offset=best_flat_actuators)
             ii += 1
-        self.send(best_flat_actuators)
+        self.set_phase(offset=best_flat_actuators)
         return best_flat_actuators, best_z_amps_corrected
 
     @Pyro4.expose
@@ -929,7 +918,7 @@ class AdaptiveOpticsDevice(Device):
         return actuator_pos
 
     @Pyro4.expose
-    def get_corrections(self, filter=None):
+    def get_corrections(self, filter=None, include_default=False):
         if not filter:
             corrections = self.corrections.copy()
         else:
@@ -939,11 +928,10 @@ class AdaptiveOpticsDevice(Device):
                 if key in filter
             }
 
-        return corrections
+        if "default" in corrections and not include_default:
+            del corrections["default"]
 
-    @Pyro4.expose
-    def remove_correction(self, name):
-        self.corrections.pop(name, None)
+        return corrections
 
     @Pyro4.expose
     def set_correction(self, name, modes=None, actuator_values=None):
@@ -1001,11 +989,6 @@ class AdaptiveOpticsDevice(Device):
         return actuator_pos
 
     @Pyro4.expose
-    def refresh_corrections(self):
-        """Apply the currently enabled corrections."""
-        return self.set_phase()
-
-    @Pyro4.expose
     def set_phase(self, applied_z_modes=None, offset=None):
         # Set applied modes and offset as default correction
         self.set_correction(
@@ -1029,16 +1012,12 @@ class AdaptiveOpticsDevice(Device):
         # Ensure the conditions for phase unwrapping are in satisfied
         self.check_unwrap_conditions()
 
-        # Ensure all corrections are disabled
-        for key in self.corrections.keys():
-            self.corrections[key]["enabled"] = False
-
         if modes_tba is None:
             modes_tba = self.get_controlMatrix().shape[1]
         assay = np.zeros((modes_tba, modes_tba))
         applied_z_modes = np.zeros(modes_tba)
         for ii in range(modes_tba):
-            self.reset()
+            self.set_phase(np.zeros(modes_tba))
             z_modes_ac0 = self.measure_zernike(modes_tba)
             applied_z_modes[ii] = 1
             self.set_phase(applied_z_modes)
@@ -1047,7 +1026,7 @@ class AdaptiveOpticsDevice(Device):
             _logger.info("Measured phase")
             assay[:, ii] = acquired_z_modes - z_modes_ac0
             applied_z_modes[ii] = 0.0
-        self.reset()
+        self.set_phase(np.zeros(modes_tba))
         return assay
 
     @Pyro4.expose
