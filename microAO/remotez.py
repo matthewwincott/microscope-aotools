@@ -99,7 +99,7 @@ class RemoteZ():
         self._n_actuators = control_matrix.shape[0]
         self._n_modes = control_matrix.shape[1]
 
-    def calibrate1(self, zstage, zpos, output_dir=None, defocus_modes=[4,11], other_modes=np.asarray([22, 5, 6, 7, 8, 9, 10])):
+    def calibrate_z_pos(self, zstage, zpos, output_dir=None, defocus_modes=[4,11], other_modes=np.asarray([22, 5, 6, 7, 8, 9, 10])):
         if self._n_actuators == 0:
             raise Exception(
                 "Remote focusing calibration failed because the adaptive "
@@ -142,7 +142,7 @@ class RemoteZ():
             self.add_datapoint(datapoint)
 
     @threads.callInNewThread
-    def calibrate2_get_data(
+    def calibrate_counteraction_get_data(
         self,
         handlers_zstage,
         handlers_camera,
@@ -229,14 +229,14 @@ class RemoteZ():
             )
         # Inform the GUI thread that a bead needs to be selected
         events.publish(
-            PUBSUB_RF_CALIB2_DATA,
+            PUBSUB_RF_CALIB_CACT_DATA,
             rf_stacks,
             output_dir_path,
             calib_params["defocus_step"]
         )
 
     @threads.callInNewThread
-    def calibrate2_get_projections(
+    def calibrate_counteraction_get_projections(
         self,
         rf_stacks,
         bead_roi,
@@ -327,7 +327,7 @@ class RemoteZ():
             }
         )
         # Ask the GUI thread to update the status light
-        events.publish(PUBSUB_RF_CALIB2_PROJ)
+        events.publish(PUBSUB_RF_CALIB_CACT_PROJ)
 
     def sensorless_correct(self, modes, start_values = None):
         # Get current sensorless params

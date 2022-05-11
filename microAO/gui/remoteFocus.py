@@ -389,22 +389,22 @@ class RemoteFocusControl(wx.Frame):
 
         # Button side panel
         data_panel_btns = wx.Panel(data_panel)
-        addFromCurrentBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from current', size=(120, -1))
-        addFromFileBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from file', size=(120, -1))
-        removeBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Remove selected', size=(120, -1))
-        saveBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save data', size=(120, -1))
-        loadBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Load data', size=(120, -1))
-        calibrate1Btn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate 1', size=(120, -1))
-        calibrate2Btn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate 2', size=(120, -1))
-        saveCalibrationBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save all calibration', size=(120, -1))
+        addFromCurrentBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from current', size=(150, -1))
+        addFromFileBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from file', size=(150, -1))
+        removeBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Remove selected', size=(150, -1))
+        saveBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save data', size=(150, -1))
+        loadBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Load data', size=(150, -1))
+        calibrateZPositionBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate Z position', size=(150, -1))
+        calibrateCounteractionBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate counteraction', size=(150, -1))
+        saveCalibrationBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save all calibration', size=(150, -1))
 
         addFromCurrentBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromCurrent)
         addFromFileBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromFile)
         removeBtn.Bind(wx.EVT_BUTTON, self.OnRemoveDatapoint)
         saveBtn.Bind(wx.EVT_BUTTON, self.OnSaveDatapoints)
         loadBtn.Bind(wx.EVT_BUTTON, self.OnLoadDatapoints)
-        calibrate1Btn.Bind(wx.EVT_BUTTON, self.OnCalibrate1)
-        calibrate2Btn.Bind(wx.EVT_BUTTON, self.OnCalibrate2)
+        calibrateZPositionBtn.Bind(wx.EVT_BUTTON, self.OnCalibrateZPosition)
+        calibrateCounteractionBtn.Bind(wx.EVT_BUTTON, self.OnCalibrateCounteraction)
         saveCalibrationBtn.Bind(wx.EVT_BUTTON, self.OnSaveCalibration)
         
         data_panel_btns_sizer = wx.BoxSizer(wx.VERTICAL)
@@ -415,8 +415,8 @@ class RemoteFocusControl(wx.Frame):
         data_panel_btns_sizer.Add(saveBtn)
         data_panel_btns_sizer.Add(loadBtn)
         data_panel_btns_sizer.Add(-1, 10)
-        data_panel_btns_sizer.Add(calibrate1Btn)
-        data_panel_btns_sizer.Add(calibrate2Btn)
+        data_panel_btns_sizer.Add(calibrateZPositionBtn)
+        data_panel_btns_sizer.Add(calibrateCounteractionBtn)
         data_panel_btns_sizer.Add(saveCalibrationBtn)
         data_panel_btns.SetSizerAndFit(data_panel_btns_sizer)
 
@@ -503,8 +503,8 @@ class RemoteFocusControl(wx.Frame):
         self.update()
 
         # Subscribe to calibration events
-        events.subscribe(PUBSUB_RF_CALIB2_DATA, self.OnCalibrate2Data)
-        events.subscribe(PUBSUB_RF_CALIB2_PROJ, self.OnCalibrate2Projections)
+        events.subscribe(PUBSUB_RF_CALIB_CACT_DATA, self.OnCalibrateCounteractionData)
+        events.subscribe(PUBSUB_RF_CALIB_CACT_PROJ, self.OnCalibrateCounteractionProjections)
 
     def addDatapont(self, datapoint):
         self._device.remotez.add_datapoint(datapoint)
@@ -574,7 +574,7 @@ class RemoteFocusControl(wx.Frame):
         imageio.mimwrite(fpath, images, format="tif")
 
 
-    def OnCalibrate1(self, e):
+    def OnCalibrateZPosition(self, e):
         # Get parameters
         inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
             self,
@@ -601,11 +601,11 @@ class RemoteFocusControl(wx.Frame):
         zstage = self._device.getStage()
 
         if zstage is not None:
-            self._device.remotez.calibrate1(zstage, zpos)
+            self._device.remotez.calibrate_z_pos(zstage, zpos)
 
         self.updateDatapointList()
 
-    def OnCalibrate2(self, e):
+    def OnCalibrateCounteraction(self, e):
         # Update status bar
         events.publish(
             events.UPDATE_STATUS_LIGHT,
@@ -660,7 +660,7 @@ class RemoteFocusControl(wx.Frame):
         with open(output_dir_path.joinpath(f"calib_params.json"), "w") as fo:
             json.dump(calib_params, fo)
         # Launch the calibration process
-        self._device.remotez.calibrate2_get_data(
+        self._device.remotez.calibrate_counteraction_get_data(
             handlers_zstage,
             handlers_camera,
             handlers_imager,
@@ -670,7 +670,7 @@ class RemoteFocusControl(wx.Frame):
         )
 
     @cockpit.util.threads.callInMainThread
-    def OnCalibrate2Data(self, rf_stacks, output_dir_path, defocus_step):
+    def OnCalibrateCounteractionData(self, rf_stacks, output_dir_path, defocus_step):
         events.publish(
             events.UPDATE_STATUS_LIGHT,
             "image count",
@@ -694,7 +694,7 @@ class RemoteFocusControl(wx.Frame):
             bead_roi
         )
         # Calculate orthogonal projects
-        self._device.remotez.calibrate2_get_projections(
+        self._device.remotez.calibrate_counteraction_get_projections(
             rf_stacks,
             bead_roi,
             wx.GetApp().Objectives.GetPixelSize(),
@@ -703,7 +703,7 @@ class RemoteFocusControl(wx.Frame):
         )
 
     @cockpit.util.threads.callInMainThread
-    def OnCalibrate2Projections(self):
+    def OnCalibrateCounteractionProjections(self):
         # Clear status light
         events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
 
