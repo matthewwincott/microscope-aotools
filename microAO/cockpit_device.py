@@ -939,12 +939,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
     def refresh_corrections(self):
         """Clear the default correction and apply all other enabled ones."""
-        actuator_pos = self.proxy.set_phase()
-
-        # Publish event
-        events.publish(PUBSUB_SET_ACTUATORS, actuator_pos)
-
-        return actuator_pos
+        return self.set_phase()
 
     def send(self, actuator_values):
         # Send values to device
@@ -953,7 +948,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Publish events
         events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
 
-    def set_phase(self, applied_z_modes, offset=None):
+    def set_phase(self, applied_z_modes=None, offset=None):
         # Eagerly publish phase value update
         events.publish(PUBSUB_SET_PHASE, applied_z_modes)
 
