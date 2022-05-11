@@ -56,32 +56,36 @@ class RFDatatypeChoice(wx.Choice):
 class RFAddDatapointFromFile(wx.Dialog):
     def __init__(self, parent, **kwargs):
         super().__init__(parent, title="Add position from file")
-        
+
         self.data = None
 
         sizer_dialog = wx.BoxSizer(wx.VERTICAL)
 
-        panel = wx.Panel(self)
-        sizer_panel = wx.BoxSizer(wx.VERTICAL)
+        self.panel = wx.Panel(self)
+        self.sizer_panel = wx.GridBagSizer(vgap=5, hgap=5)
 
-        self.datatype_label = wx.StaticText(panel, label="type")
-        self.datatype = RFDatatypeChoice(panel)
-        self.zpos_label = wx.StaticText(panel, label="z (μm)")
-        self.zpos = FloatCtrl(panel, value="0")
-        self.fileCtrl = wx.FilePickerCtrl(panel, size=(400, 50))
+        self.datatype = RFDatatypeChoice(self.panel)
+        self.zpos = FloatCtrl(self.panel, value="0")
+        self.fileCtrlDatapoint = wx.FilePickerCtrl(self.panel, size=(400, -1))
 
-        hbox = wx.BoxSizer(wx.HORIZONTAL)
-        hbox.Add(self.datatype_label, wx.SizerFlags().Centre())
-        hbox.Add(self.datatype, wx.SizerFlags().Centre())
-        sizer_panel.Add(hbox)
+        for row, (label, widget) in enumerate(
+            (
+                ("Type:", self.datatype),
+                ("Z (μm):", self.zpos),
+                ("Datapoint:", self.fileCtrlDatapoint)
+            )
+        ):
+            self.sizer_panel.Add(wx.StaticText(self.panel, label=label), (row, 0))
+            self.sizer_panel.Add(widget, (row, 1))
 
-        hbox = wx.BoxSizer(wx.HORIZONTAL)
-        hbox.Add(self.zpos_label, wx.SizerFlags().Centre())
-        hbox.Add(self.zpos, wx.SizerFlags().Centre())
-        sizer_panel.Add(hbox)
-        sizer_panel.Add(self.fileCtrl)
+        self.fileCtrlSysflatLabel = wx.StaticText(self.panel, label="System flat:")
+        self.fileCtrlSysflat = wx.FilePickerCtrl(self.panel, size=(400, 30))
+        self.sizer_panel.Add(self.fileCtrlSysflatLabel, (row + 1, 0))
+        self.sizer_panel.Add(self.fileCtrlSysflat, (row + 1, 1))
+        self.fileCtrlSysflatLabel.Hide()
+        self.fileCtrlSysflat.Hide()
 
-        panel.SetSizer(sizer_panel)
+        self.panel.SetSizer(self.sizer_panel)
 
         sizer_buttons = wx.BoxSizer(wx.HORIZONTAL)
         confirmBtn = wx.Button(self, label='Ok')
@@ -90,21 +94,43 @@ class RFAddDatapointFromFile(wx.Dialog):
         sizer_buttons.Add(cancelBtn)
         
         # Bind events
+        self.datatype.Bind(wx.EVT_CHOICE, self.OnDatatype)
         confirmBtn.Bind(wx.EVT_BUTTON, self.OnConfirm)
         cancelBtn.Bind(wx.EVT_BUTTON, self.OnCancel)
 
-        sizer_dialog.Add(panel, flags=wx.SizerFlags().Border(wx.ALL, 10))
+        sizer_dialog.Add(self.panel, flags=wx.SizerFlags().Border(wx.ALL, 10))
         sizer_dialog.Add(sizer_buttons, wx.SizerFlags().Centre().Border(wx.ALL, 10))
 
         self.SetSizerAndFit(sizer_dialog)
 
         self.Centre()
 
+    def OnDatatype(self, e: wx.CommandEvent):
+        if e.GetEventObject().GetString(e.GetInt()) == "actuator":
+            self.fileCtrlSysflatLabel.Show()
+            self.fileCtrlSysflat.Show()
+            self.Fit()
+        else:
+            self.fileCtrlSysflatLabel.Hide()
+            self.fileCtrlSysflat.Hide()
+            self.Fit()
+
     def OnConfirm(self, e):
         zpos = self.zpos.value
-        fpath = self.fileCtrl.GetPath()
-        values = np.loadtxt(fpath)
+        values = np.loadtxt(self.fileCtrlDatapoint.GetPath())
         datatype = self.datatype.GetString(self.datatype.GetSelection())
+
+        if datatype == "actuator":
+            flat_path = self.fileCtrlSysflat.GetPath()
+            if flat_path:
+                flat = np.loadtxt(flat_path)
+                neutral = np.zeros(values.shape) + 0.5
+                values = neutral + values - flat
+            else:
+                print(
+                    "!!! Warning !!! Adding an 'actuator' datapoint without "
+                    "specified system flat..."
+                )
 
         self.data = {
             'z': zpos,
@@ -133,10 +159,11 @@ class RFAddDatapointFromCurrent(wx.Dialog):
         panel = wx.Panel(self)
         sizer_panel = wx.BoxSizer(wx.VERTICAL)
 
-        self.datatype_label = wx.StaticText(panel, label="type")
+        self.datatype_label = wx.StaticText(panel, label="Type:")
         self.datatype = RFDatatypeChoice(panel)
-        self.zpos_label = wx.StaticText(panel, label="z (μm)")
+        self.zpos_label = wx.StaticText(panel, label="Z (μm):")
         self.zpos = FloatCtrl(panel, value="0")
+        self.flat_checkbox = wx.CheckBox(panel, label="Subtract system flat")
 
         hbox = wx.BoxSizer(wx.HORIZONTAL)
         hbox.Add(self.zpos_label, wx.SizerFlags().Centre())
@@ -148,6 +175,9 @@ class RFAddDatapointFromCurrent(wx.Dialog):
         hbox.Add(self.datatype, wx.SizerFlags().Centre())
         sizer_panel.Add(hbox)
 
+        self.flat_checkbox.Hide()
+        sizer_panel.Add(self.flat_checkbox)
+
         panel.SetSizer(sizer_panel)
 
         sizer_buttons = wx.BoxSizer(wx.HORIZONTAL)
@@ -157,6 +187,7 @@ class RFAddDatapointFromCurrent(wx.Dialog):
         sizer_buttons.Add(cancelBtn)
         
         # Bind events
+        self.datatype.Bind(wx.EVT_CHOICE, self.OnDatatype)
         confirmBtn.Bind(wx.EVT_BUTTON, self.OnConfirm)
         cancelBtn.Bind(wx.EVT_BUTTON, self.OnCancel)
 
@@ -167,14 +198,26 @@ class RFAddDatapointFromCurrent(wx.Dialog):
 
         self.Centre()
 
+    def OnDatatype(self, e):
+        if e.GetEventObject().GetString(e.GetInt()) == "actuator":
+            self.flat_checkbox.Show()
+            self.Fit()
+        else:
+            self.flat_checkbox.Hide()
+            self.Fit()
+
     def OnConfirm(self, e):
         zpos = self.zpos.value
-        datatype = self.datatype.GetString(self.datatype.GetSelection()).lower()        
+        datatype = self.datatype.GetString(self.datatype.GetSelection()).lower()
 
         if datatype == "zernike":
             values = self._device.proxy.get_last_modes()
         elif datatype == "actuator":
             values = self._device.proxy.get_last_actuator_values()
+            if self.flat_checkbox.GetValue():
+                flat = self._device.proxy.get_system_flat()
+                neutral = np.zeros(values.shape) + 0.5
+                values = neutral + values - flat
         else:
             values = None
 
