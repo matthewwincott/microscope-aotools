@@ -228,8 +228,9 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             pass
 
         try:
-            sys_flat = np.asarray(userConfig.getValue("dm_sys_flat"))
-            self.set_system_flat(sys_flat)
+            sys_flat = userConfig.getValue("dm_sys_flat")
+            if sys_flat is not None:
+                self.proxy.set_system_flat(np.asarray(sys_flat))
         except Exception:
             pass
 
