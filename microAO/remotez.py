@@ -7,6 +7,10 @@ import numpy as np
 import scipy
 import h5py
 import tifffile
+import skimage.color
+import skimage.draw
+import skimage.filters
+import skimage.measure
 import skimage.transform
 
 from cockpit import depot, events
@@ -19,9 +23,19 @@ RF_DATATYPES = ["zernike", "actuator"]
 
 @dataclasses.dataclass(frozen=True)
 class _RemoteFocusStack:
-    stage_position: float
+    stage_position_abs: float
+    stage_position_rel: float
     rf_offsets: np.ndarray
     images: list[np.ndarray]
+
+@dataclasses.dataclass(frozen=True)
+class _OrthoProjCalib:
+    image: np.ndarray
+    image_labelled: np.ndarray
+    stage_position_rel: float
+    stage_position_rel_corrected: float
+    centroid: tuple[float, float]
+    centroid_padded: tuple[float, float]
 
 def _orthogonal_projection(image, point = None, xy2z_ratio=1.0):
     """Both image and point have dimensions (Z, Y, X)."""
@@ -72,6 +86,19 @@ def _find_bead_centre(bead_image):
     # Return the indices of the top item
     return pixels[0][0]
 
+def _find_psf_centroid(image_projection):
+    # Threshold the image
+    image_binary = image_projection > skimage.filters.threshold_yen(
+        image_projection
+    )
+    # Label and get region properties
+    image_labelled = skimage.measure.label(image_binary)
+    region_properties = skimage.measure.regionprops(image_labelled)
+    # Find a suitable region
+    for region in region_properties:
+        if region["area"] >= 100:
+            return region["centroid"]
+
 class RemoteZ():
     def __init__(self, device):
         # Store reference to cockpit device
@@ -81,6 +108,7 @@ class RemoteZ():
         self.datapoints = []
         self.z_lookup = {key:[] for key in RF_DATATYPES}
         self._position = 0
+        self._compensation_poly = None
 
         self._n_actuators = 0
         self._n_modes = 0
@@ -175,8 +203,10 @@ class RemoteZ():
             # Move the stage to the right position
             handlers_zstage.moveAbsolute(zpos_stage)
             # Do a remote focus Z stack and store the images
+            stage_current_position = handlers_zstage.getPosition()
             rf_stacks[index] = _RemoteFocusStack(
-                stage_position=handlers_zstage.getPosition(),
+                stage_position_abs=stage_current_position,
+                stage_position_rel=stage_current_position - stage_original_position,
                 rf_offsets=np.linspace(
                     calib_params["defocus_min"],
                     calib_params["defocus_max"],
@@ -206,7 +236,7 @@ class RemoteZ():
         # Move the stage to its original position
         handlers_zstage.moveAbsolute(stage_original_position)
         # Ensure stacks are sorted by stage position
-        rf_stacks.sort(key=lambda item: item.stage_position)
+        rf_stacks.sort(key=lambda item: item.stage_position_abs)
         # Save the collected data
         events.publish(
             events.UPDATE_STATUS_LIGHT,
@@ -216,8 +246,8 @@ class RemoteZ():
         for rf_stack in rf_stacks:
             tifffile.imwrite(
                 output_dir_path.joinpath(
-                    f"remote-focus-zstack_z{rf_stack.stage_position:.03f}um"
-                    ".ome.tif"
+                    f"remote-focus-zstack_z{rf_stack.stage_position_rel:.03f}"
+                    "um.ome.tif"
                 ),
                 rf_stack.images,
                 metadata = {
@@ -250,11 +280,11 @@ class RemoteZ():
             "Remote focus calibration | Calculating orthogonal views..."
         )
         # Find minimum and maximum Z values, and total Z range in px
-        z_min_um = rf_stacks[0].stage_position + rf_stacks[0].rf_offsets[0]
-        z_max_um = rf_stacks[-1].stage_position + rf_stacks[-1].rf_offsets[-1]
+        z_min_um = rf_stacks[0].stage_position_abs + rf_stacks[0].rf_offsets[0]
+        z_max_um = rf_stacks[-1].stage_position_abs + rf_stacks[-1].rf_offsets[-1]
         z_range_px = int(np.ceil((z_max_um - z_min_um) / xy_pixelsize))
         # Process stacks
-        projections_all_padded = []
+        projection_data = [[], []]  # list of lists; [[zx0, zx1, ...], [zy0, zy1, ...]]
         for rf_stack in rf_stacks:
             # Crop bead
             bead = rf_stack.images[
@@ -268,10 +298,10 @@ class RemoteZ():
                 _find_bead_centre(bead),
                 xy_pixelsize / defocus_step
             )[1:]
-            # Pad the projections with zeros if necessary
+            # Calculate the necessary padding (identical for both zx and zy)
             offset_top_um = (
                 z_max_um -
-                (rf_stack.stage_position + rf_stack.rf_offsets[-1])
+                (rf_stack.stage_position_abs + rf_stack.rf_offsets[-1])
             )
             offset_top_px = int(np.around(offset_top_um / xy_pixelsize))
             offset_bottom_px = (
@@ -281,8 +311,9 @@ class RemoteZ():
                 # The image has been offset too much => clamp it to the bottom
                 offset_top_px += offset_bottom_px
                 offset_bottom_px = 0
-            projections_all_padded.append([])
-            for projection in projections:
+            # Process the two projections
+            for index, projection in enumerate(projections):
+                # Create a padded image
                 padded_stack = []
                 if offset_top_px > 0:
                     padded_stack.append(
@@ -299,33 +330,93 @@ class RemoteZ():
                             dtype=projection.dtype
                         )
                     )
-                projections_all_padded[-1].append(np.vstack(padded_stack))
-        # Concatenate the individual padded projections
-        projections_zx_concat = np.concatenate(
-            [p[0] for p in projections_all_padded],
-            axis=1
+                projection_padded = np.vstack(padded_stack)
+                # Find centroid
+                centroid = _find_psf_centroid(projection)
+                # Derive error, padded_centroid, and labelled projection, if necessary
+                if not centroid:
+                    print(
+                        "!!! Warning !!! Failed to find centroid for RF "
+                        f"calibration stack at Z = {rf_stack.stage_position_rel} "
+                        f"and projection {index}."
+                    )
+                    position_corrected = None
+                    centroid_padded = None
+                    projection_padded_labelled = None
+                else:
+                    # Calculate error term
+                    image_offset_um = ((projections.shape[0] / 2) - centroid[0]) * xy_pixelsize
+                    error = rf_stack.stage_position_rel - image_offset_um
+                    position_corrected = rf_stack.stage_position_rel + error
+                    # Calculate padded centroid
+                    centroid_padded = (
+                        centroid[0] + abs(offset_top_px - offset_bottom_px) / 2,
+                        centroid[1]
+                    )
+                    # Label projection image
+                    projection_padded_labelled = skimage.color.gray2rgb(projection_padded)
+                    rr, cc = skimage.draw.disk(
+                        centroid_padded,
+                        2.5,
+                        shape=projection_padded_labelled.shape
+                    )
+                    projection_padded_labelled[rr, cc, :] = (1, 0, 1)
+                # Store the data
+                projection_data[index].append(
+                    _OrthoProjCalib(
+                        projection_padded,
+                        projection_padded_labelled,
+                        rf_stack.stage_position_rel,
+                        position_corrected,
+                        centroid,
+                        centroid_padded
+                    )
+                )
+        # Fit a line to the corrected Z offsets and save the coefficients
+        polynomials = []
+        for index in range(len(projection_data)):
+            polynomials.append(
+                np.polynomial.polynomial.Polynomial.fit(
+                    [
+                        datum.stage_position_rel_corrected
+                        for datum in projection_data[index]
+                        if datum.stage_position_rel_corrected
+                    ],
+                    [
+                        datum.stage_position_rel
+                        for datum in projection_data[index]
+                        if datum.stage_position_rel_corrected
+                    ],
+                    1
+                )
+            )
+        self._compensation_poly = sum(polynomials) / 2
+        np.savetxt(
+            output_dir_path.joinpath(
+                f"remote-focus_compensation-polynomial-coefficients.txt",
+            ),
+            self._compensation_poly.convert().coef
         )
-        projections_zy_concat = np.concatenate(
-            [p[1] for p in projections_all_padded],
-            axis=1
-        )
-        # Save concatenated projections
-        tifffile.imwrite(
-            output_dir_path.joinpath("orthogonal-views_zx.ome.tif"),
-            projections_zx_concat,
-            metadata = {
-                "PhysicalSizeX": xy_pixelsize,  # um
-                "PhysicalSizeY": xy_pixelsize,  # um
-            }
-        )
-        tifffile.imwrite(
-            output_dir_path.joinpath("orthogonal-views_zy.ome.tif"),
-            projections_zy_concat,
-            metadata = {
-                "PhysicalSizeX": xy_pixelsize,  # um
-                "PhysicalSizeY": xy_pixelsize,  # um
-            }
-        )
+        # Concatenate projections and save them
+        for index, proj_type in enumerate(("zx", "zy")):
+            for suffix in ("", "_labelled"):
+                concat = np.concatenate(
+                    [
+                        getattr(datum, "image" + suffix)
+                        for datum in projection_data[index]
+                    ],
+                    axis=1
+                )
+                tifffile.imwrite(
+                    output_dir_path.joinpath(
+                        f"orthogonal-views_{proj_type}{suffix}.ome.tif"
+                    ),
+                    concat,
+                    metadata = {
+                        "PhysicalSizeX": xy_pixelsize,  # um
+                        "PhysicalSizeY": xy_pixelsize,  # um
+                    }
+                )
         # Ask the GUI thread to update the status light
         events.publish(PUBSUB_RF_CALIB_CACT_PROJ)
 
@@ -460,6 +551,10 @@ class RemoteZ():
 
         # Get current remotez correction
         correction_remotez_original = self._device.proxy.get_corrections(filter=["remotez"])
+
+        # Compensate Z
+        if self._compensation_poly:
+            z = self._compensation_poly(z)
 
         try:
             if datatype == "zernike":
