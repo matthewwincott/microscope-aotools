@@ -901,7 +901,7 @@ class AdaptiveOpticsDevice(Device):
     @Pyro4.expose
     def get_actuator_pos_from_modes(self, applied_z_modes, offset=None):
         actuator_pos = np.zeros(self.numActuators)
-        if np.any(applied_z_modes > 0.0):
+        if np.any(applied_z_modes != 0.0):
             try:
                 actuator_pos = aoAlg.ac_pos_from_zernike(
                     applied_z_modes, self.numActuators
