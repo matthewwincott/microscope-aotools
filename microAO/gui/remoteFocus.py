@@ -19,6 +19,7 @@
 import os
 import pathlib
 import json
+import copy
 
 from cockpit import events
 import cockpit.gui.dialogs
@@ -38,7 +39,6 @@ import matplotlib.lines
 import matplotlib.patheffects
 
 import numpy as np
-import scipy
 import imageio
 
 from microAO.events import *
@@ -506,22 +506,27 @@ class RemoteFocusControl(wx.Frame):
         events.subscribe(PUBSUB_RF_CALIB_CACT_DATA, self.OnCalibrateCounteractionData)
         events.subscribe(PUBSUB_RF_CALIB_CACT_PROJ, self.OnCalibrateCounteractionProjections)
 
-    def addDatapont(self, datapoint):
-        self._device.remotez.add_datapoint(datapoint)
-        
+    def addDatapont(self, z, datatype, value):
+        self._device.remotez.add_datapoint(z, datatype, value)
         self.updateDatapointList()
         self.update()
 
-    def removeDatapoint(self, datapoint):
-        self._device.remotez.remove_datapoint(datapoint)
-        
+    def removeDatapoint(self, z, datatype):
+        self._device.remotez.remove_datapoint(z, datatype)
         self.updateDatapointList()
         self.update()
 
     def updateDatapointList(self):
         self.listbox.Clear()
-        for d in self._device.remotez.datapoints:
-            self.listbox.AppendItems("{} ({})".format(d["z"],d["datatype"]))
+        items_to_append = []
+        for z in sorted(self._device.remotez.datapoints.keys()):
+            for datatype in self._device.remotez.datapoints[z].keys():
+                if self._device.remotez.datapoints[z][datatype] is None:
+                    continue
+                items_to_append.append(
+                    "{} ({})".format(z, datatype)
+                )
+        self.listbox.AppendItems(items_to_append)
 
     def OnRemoteZ(self, e):
         actuator_pos = self._device.remotez.set_z(
@@ -712,7 +717,7 @@ class RemoteFocusControl(wx.Frame):
         
         if dlg.ShowModal() == wx.ID_OK:
             datapoint = dlg.GetData()
-            self.addDatapont(datapoint)
+            self.addDatapont(datapoint["z"], datapoint["datatype"], datapoint["values"])
         else:
             pass
         
@@ -725,7 +730,7 @@ class RemoteFocusControl(wx.Frame):
         
         if dlg.ShowModal() == wx.ID_OK:
             datapoint = dlg.GetData()
-            self.addDatapont(datapoint)
+            self.addDatapont(datapoint["z"], datapoint["datatype"], datapoint["values"])
         else:
             pass
 
@@ -738,9 +743,11 @@ class RemoteFocusControl(wx.Frame):
         selected = self.listbox.GetSelections()
 
         for i in selected:
-            datapoint = self._device.remotez.datapoints[i]
-            self.removeDatapoint(datapoint)
-        
+            s = self.listbox.GetString(i)
+            z, datatype = s.split(" ")
+            z = float(z)
+            datatype = datatype[1:-1]
+            self.removeDatapoint(z, datatype)
         # Update GUI
         self.update()
 
@@ -789,9 +796,15 @@ class RemoteFocusControl(wx.Frame):
 
         # Get data
         current_datatype = self.datatype_vis.GetStringSelection().lower()
-        points = [a for a in self._device.remotez.datapoints if a["datatype"].lower() == current_datatype]
-        z = np.array([point["z"] for point in points])
-        values = np.array([point["values"] for point in points])
+        zs = []
+        values = []
+        for z in self._device.remotez.datapoints.keys():
+            value = self._device.remotez.datapoints[z][current_datatype]
+            if value is not None:
+                zs.append(z)
+                values.append(value)
+        z = np.array(zs)
+        values = np.array(values)
         z_lookup = self._device.remotez.z_lookup[current_datatype]
         
         try:
@@ -828,13 +841,11 @@ class RemoteFocusControl(wx.Frame):
             pass
 
     def OnSaveCalibration(self, e):
-        datapoints = []
-        for datapoint in self._device.remotez.datapoints:
-            datapoint_new = {}
-            for key, value in datapoint.items():
-                if isinstance(value, np.ndarray):
-                    datapoint_new[key] = np.ndarray.tolist(value)
-                else:
-                    datapoint_new[key] = value
-            datapoints.append(datapoint_new)
+        datapoints = copy.deepcopy(self._device.remotez.datapoints)
+        for z in datapoints:
+            for datatype in datapoints[z]:
+                if isinstance(datapoints[z][datatype], np.ndarray):
+                    datapoints[z][datatype] = np.ndarray.tolist(
+                        datapoints[z][datatype]
+                    )
         cockpit.util.userConfig.setValue("rf_datapoints", datapoints)

@@ -2,6 +2,7 @@ import os
 from functools import partial
 import glob
 import dataclasses
+import copy
 
 import numpy as np
 import scipy
@@ -105,7 +106,7 @@ class RemoteZ():
         self._device = device
 
         # Store state
-        self.datapoints = []
+        self.datapoints = {}
         self.z_lookup = {key:[] for key in RF_DATATYPES}
         self._position = 0
         self._compensation_poly = None
@@ -118,8 +119,8 @@ class RemoteZ():
             self._n_modes = control_matrix.shape[1]
 
         datapoints_init = userConfig.getValue("rf_datapoints")
-        if datapoints_init is not None:
-            self.datapoints = datapoints_init
+        if datapoints_init:
+            self.datapoints = copy.deepcopy(datapoints_init)
             self.update_calibration()
             self.set_z(0)
 
@@ -489,17 +490,22 @@ class RemoteZ():
 
         return images
 
-    def add_datapoint(self, datapoint):
-        self.datapoints.append(datapoint)
-        self.datapoints.sort(key=lambda d: d["z"])
+    def add_datapoint(self, z, datatype, value):
+        if datatype not in RF_DATATYPES:
+            raise Exception(f"Unrecognised datatype '{datatype}'.")
+        if z not in self.datapoints:
+            self.datapoints[z] = {key: None for key in RF_DATATYPES}
+        self.datapoints[z][datatype] = value
         self.update_calibration()
-        return self.datapoints
 
-    def remove_datapoint(self, datapoint):
-        self.datapoints.remove(datapoint)
-        self.datapoints.sort(key=lambda d: d["z"])
+    def remove_datapoint(self, z, datatype):
+        if datatype not in RF_DATATYPES:
+            raise Exception(f"Unrecognised datatype '{datatype}'.")
+        if z in self.datapoints:
+            self.datapoints[z][datatype] = None
+            if not any([self.datapoints[z][dtype] for dtype in RF_DATATYPES]):
+                del self.datapoints[z]
         self.update_calibration()
-        return self.datapoints
 
     def update_calibration(self, datatypes=None):
         # Get data
@@ -510,10 +516,10 @@ class RemoteZ():
             datatypes = [datatypes]
 
         for datatype in datatypes:
-            points = [a for a in self.datapoints if a["datatype"].lower() == datatype]
-            z = np.array([point["z"] for point in points])
-            values = np.array([point["values"] for point in points])
-            
+            z = [z for z in self.datapoints.keys() if self.datapoints[z][datatype] is not None]
+            z = np.array(z)
+            values = np.array([self.datapoints[zz][datatype] for zz in z])
+
             # Calculate regression
             try:
                 n_measurements = values.shape[0]
@@ -619,29 +625,25 @@ class RemoteZ():
         return self._position
 
     def save_datapoints(self, output_dir):
-        for datapoint in self.datapoints:
-            fname = "{}-{}.h5".format(datapoint["datatype"], str(datapoint["z"]).replace('.','_'))
-            fpath = os.path.join(output_dir, fname)
+        for z in self.datapoints.keys():
+            for datatype in self.datapoints[z].keys():
+                value = self.datapoints[z][datatype]
+                if value is None:
+                    continue
+                fname = "{}-{}.h5".format(datatype, str(z).replace('.', '_'))
+                fpath = os.path.join(output_dir, fname)
 
-            with h5py.File(fpath, 'w') as f:
-                for key, val in datapoint.items():
-                    try:
-                        f.create_dataset(key, data=val)
-                    except Exception as e:
-                        print('Failed to write: {}'.format(key), e)
+                with h5py.File(fpath, 'w') as f:
+                    f.create_dataset("z", data=z)
+                    f.create_dataset("datatype", data=datatype)
+                    f.create_dataset("value", data=value)
 
     def load_datapoints(self, input_dir):
         search_string = str(os.path.join(input_dir, '*.h5'))
 
         for fpath in glob.glob(search_string):
             with h5py.File(fpath, 'r') as f:
-                datapoint = {}
-
-                # Keys
-                for key in f.keys():
-                    if key == 'datatype':
-                        datapoint[key] = f[key][()].decode('utf-8')
-                    else:
-                        datapoint[key] = f[key][()]                   
-
-                self.add_datapoint(datapoint)
+                z = f["z"][()]
+                datatype = f["datatype"][()].decode("utf-8")
+                value = f["value"][()]
+                self.add_datapoint(z, datatype, value)
