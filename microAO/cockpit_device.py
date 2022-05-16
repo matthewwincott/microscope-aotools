@@ -1019,6 +1019,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.proxy.queue_patterns(patterns)
 
     def _generate_exercise_pattern(
+        self,
         gain=0.0,
         layout_name="alpao69",
         pattern_name="checker"

@@ -1337,9 +1337,9 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                 "Repeats"
             ],
             (
-                0.0,
-                10,
-                1,
+                0.7,
+                3000,
+                50,
             ),
         )
         self._device.exercise(
