@@ -211,7 +211,12 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             for _ in range(50):
                 self.send(np.random.rand(self.no_actuators))
                 time.sleep(0.01)
-        
+
+        # Initialise sensorless data logging
+        self._log_sensorless_data = False
+        if self.config.get("log_sensorless_data", "false").lower() in ["true", "t", "yes", "y", 1]:
+            self._log_sensorless_data = True
+
         # Reset the DM
         self.reset()
 
@@ -775,15 +780,16 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
             self.correctSensorlessAberation()
 
-            log_correction_applied(
-                self.sensorless_data["image_stack"],
-                self.sensorless_data["zernike_applied"],
-                self.sensorless_params["nollZernike"],
-                self.sensorless_data["sensorless_correct_coef"],
-                self.sensorless_data["actuator_offset"],
-                self.sensorless_data["metric_stack"],
-                self.sensorless_data["z_steps"]
-            )
+            if self._log_sensorless_data:
+                log_correction_applied(
+                    self.sensorless_data["image_stack"],
+                    self.sensorless_data["zernike_applied"],
+                    self.sensorless_params["nollZernike"],
+                    self.sensorless_data["sensorless_correct_coef"],
+                    self.sensorless_data["actuator_offset"],
+                    self.sensorless_data["metric_stack"],
+                    self.sensorless_data["z_steps"]
+                )
 
             logger.log.debug(
                 "Actuator positions applied: %s", self.sensorless_data["actuator_offset"]
