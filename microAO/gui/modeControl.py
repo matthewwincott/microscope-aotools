@@ -232,14 +232,14 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         self.SetupScrolling()
         self.Layout()
 
+        # Initialise the mode control correction
+        self._device.set_correction("mode control")
+
         # Subscribe to pubsub events
         events.subscribe(PUBSUB_SET_PHASE, self.HandleSetPhase)
 
         # Bind close event
         self.Bind(wx.EVT_CLOSE, self.OnClose)
-
-        # Initialise the mode control correction
-        self._device.set_correction("mode control")
 
     def FilterModes(self):
         # Show only filtered modes
@@ -288,8 +288,14 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         for mode_control in self._mode_controls:
             mode_control.SetValue(0, quiet=quiet)
 
-    def HandleSetPhase(self, modes):
-        if modes is not None:
+    def HandleSetPhase(self):
+        corrections = self._device.get_corrections(include_default=True)
+        if corrections["mode control"]["enabled"]:
+            modes = np.zeros(self._n_modes) + sum([
+                np.array(correction["modes"])
+                for correction in corrections.values()
+                if correction["enabled"] and correction["modes"] is not None
+            ])
             self.SetModes(modes)
 
 

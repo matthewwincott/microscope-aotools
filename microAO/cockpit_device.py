@@ -959,13 +959,10 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
 
     def set_phase(self, applied_z_modes=None, offset=None):
-        # Eagerly publish phase value update
-        events.publish(PUBSUB_SET_PHASE, applied_z_modes)
-
-        # Send values to device
         actuator_values = self.proxy.set_phase(applied_z_modes, offset=offset)
         
-        # Publish actuator change
+        # Publish events
+        events.publish(PUBSUB_SET_PHASE)
         events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
 
         return actuator_values
