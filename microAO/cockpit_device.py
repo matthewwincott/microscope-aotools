@@ -68,7 +68,7 @@ def log_correction_applied(
     # Derive file path
     ao_log_filepath = os.path.join(
         wx.GetApp().Config["log"].getpath("dir"),
-        "sensorless_AO" + time.strftime("%Y%m%d_%H%M", time.gmtime()) + ".h5",
+        "sensorless_AO_" + time.strftime("%Y%m%d_%H%M", time.gmtime()) + ".h5",
     )
 
     # Write data to file
