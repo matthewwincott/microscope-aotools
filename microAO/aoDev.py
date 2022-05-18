@@ -25,6 +25,7 @@ import numpy as np
 import Pyro4
 import time
 import logging
+import copy
 
 import aotools
 from microAO.aoAlg import AdaptiveOpticsFunctions
@@ -918,19 +919,11 @@ class AdaptiveOpticsDevice(Device):
         return actuator_pos
 
     @Pyro4.expose
-    def get_corrections(self, filter=None, include_default=False):
-        if not filter:
-            corrections = self.corrections.copy()
-        else:
-            corrections = {
-                key:value
-                for key, value in self.corrections.copy().items()
-                if key in filter
-            }
-
+    def get_corrections(self, include_default=False):
+        corrections = copy.deepcopy(self.corrections)
         if "default" in corrections and not include_default:
+            # Remove default correction if not explicitly requested
             del corrections["default"]
-
         return corrections
 
     @Pyro4.expose

@@ -674,7 +674,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             self,
             id=wx.ID_ANY,
             size=wx.Size(150,-1),
-            choices=sorted(self._device.proxy.get_corrections().keys())
+            choices=sorted(self._device.get_corrections().keys())
         )
         self.checklist_corrections.Bind(
             wx.EVT_CHECKLISTBOX,

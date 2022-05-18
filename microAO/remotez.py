@@ -556,7 +556,7 @@ class RemoteZ():
             )
 
         # Get current remotez correction
-        correction_remotez_original = self._device.proxy.get_corrections(filter=["remotez"])
+        original_corrections = self._device.get_corrections()
 
         # Compensate Z
         if self._compensation_poly:
@@ -579,13 +579,13 @@ class RemoteZ():
         actuator_pos = self._device.proxy.calc_shape()
 
         # Restore original remotez correction
-        if correction_remotez_original:
+        if "remotez" in original_corrections:
             self._device.set_correction(
                 "remotez",
-                modes=correction_remotez_original["remotez"]["modes"],
-                actuator_values=correction_remotez_original["remotez"]["actuator_values"]
+                modes=original_corrections["remotez"]["modes"],
+                actuator_values=original_corrections["remotez"]["actuator_values"]
             )
-            self._device.toggle_correction("remotez", correction_remotez_original["remotez"]["enabled"])
+            self._device.toggle_correction("remotez", original_corrections["remotez"]["enabled"])
         else:
             self._device.toggle_correction("remotez", False)
 

@@ -554,7 +554,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.checkIfCalibrated()
 
         # Ensure all corrections are disabled
-        original_corrections = self.proxy.get_corrections()
+        original_corrections = self.get_corrections()
         self.reset()
 
         assay = self.proxy.assess_character()
@@ -584,7 +584,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.checkIfCalibrated()
 
         # Ensure all corrections are disabled
-        original_corrections = self.proxy.get_corrections()
+        original_corrections = self.get_corrections()
 
         control_matrix = self.proxy.get_controlMatrix()
         n_actuators = control_matrix.shape[0]
@@ -609,7 +609,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         return sys_flat_values, best_z_amps_corrected
 
     def reset(self):
-        for key in self.proxy.get_corrections().keys():
+        for key in self.get_corrections().keys():
             self.toggle_correction(key, False)
         self.refresh_corrections()
 
@@ -649,7 +649,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.sensorless_data["actuator_offset"] = self.proxy.get_last_actuator_values()
 
         # Disable all corrections (will be restored at the end)
-        for correction_name in [key for key, value in self.proxy.get_corrections().items() if value["enabled"]]:
+        for correction_name in [key for key, value in self.get_corrections().items() if value["enabled"]]:
             self.sensorless_data["originally_enabled_corrections"].append(correction_name)
             self.toggle_correction(correction_name, False)
 
@@ -924,6 +924,9 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Set in device
         self.proxy.set_system_flat(values)
 
+    def get_corrections(self, include_default=False):
+        return self.proxy.get_corrections(include_default)
+
     def set_correction(self, name, modes=None, actuator_values=None):
         self.proxy.set_correction(name, modes=modes, actuator_values=actuator_values)
 
@@ -931,7 +934,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         events.publish(
             PUBUSB_CHANGED_CORRECTION,
             name,
-            self.proxy.get_corrections(filter=[name])[name]["enabled"]
+            self.get_corrections()[name]["enabled"]
         )
 
     def toggle_correction(self, name, enable):
@@ -941,7 +944,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         events.publish(
             PUBUSB_CHANGED_CORRECTION,
             name,
-            self.proxy.get_corrections(filter=[name])[name]["enabled"]
+            self.get_corrections()[name]["enabled"]
         )
 
     def refresh_corrections(self):
