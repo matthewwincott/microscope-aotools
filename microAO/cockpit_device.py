@@ -57,61 +57,19 @@ from microAO.remotez import RemoteZ
 
 aoAlg = AdaptiveOpticsFunctions()
 
-def _get_timestamped_log_path(prefix):
-    dirname = wx.GetApp().Config["log"].getpath("dir")
-    timestamp = time.strftime("%Y%m%d_%H%M", time.gmtime())
-    basename = prefix + "_" + timestamp    
-    path = os.path.join(dirname, basename)
-
-    return path
-
-def _np_save_with_timestamp(data, basename_prefix):
-    fpath = _get_timestamped_log_path(basename_prefix)
-    np.save(fpath, data)
-
-
 def log_correction_applied(
     image_stack,
     zernike_applied,
     nollZernike,
     sensorless_correct_coef,
-    actuator_offset,
     metric_stack,
     z_steps
 ):
-    # Save full stack of images used
-    # _np_save_with_timestamp(
-    #     np.asarray(image_stack),
-    #     "sensorless_AO_correction_stack",
-    # )
-
-    # _np_save_with_timestamp(
-    #     zernike_applied,
-    #     "sensorless_AO_zernike_applied",
-    # )
-
-    # _np_save_with_timestamp(nollZernike, "sensorless_AO_nollZernike")
-    # _np_save_with_timestamp(
-    #     sensorless_correct_coef,
-    #     "sensorless_correct_coef",
-    # )
-
-    # _np_save_with_timestamp(actuator_offset, "ac_pos_sensorless")
-    # _np_save_with_timestamp(metric_stack, "sensorless_AO_metric_stack")
-
+    # Derive file path
     ao_log_filepath = os.path.join(
         wx.GetApp().Config["log"].getpath("dir"),
-        "sensorless_AO_logger.txt",
+        "sensorless_AO" + time.strftime("%Y%m%d_%H%M", time.gmtime()) + ".h5",
     )
-    with open(ao_log_filepath, "a+") as fh:
-        fh.write(
-            "Time stamp: %s\n" % time.strftime("%Y/%m/%d %H:%M", time.gmtime())
-        )
-        fh.write("Aberrations measured: %s\n" % (sensorless_correct_coef))
-        fh.write("Actuator positions applied: %s\n" % (str(actuator_offset)))
-
-    # write data to hdf5 file
-    ao_log_filepath = _get_timestamped_log_path('sensorless_AO_logger')+'.h5'
 
     # Write data to file
     with h5py.File(ao_log_filepath, 'w') as f:
@@ -121,7 +79,6 @@ def log_correction_applied(
                 ('zernike_applied',zernike_applied),
                 ('nollZernike',nollZernike),
                 ('sensorless_correct_coef',sensorless_correct_coef),
-                ('actuator_offset',actuator_offset),
                 ('metric_stack',metric_stack),
                 ('z_steps',z_steps),
             ]
@@ -634,7 +591,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         # Shared state for the new image callbacks during sensorless
         self.sensorless_data = {
-            "actuator_offset" : None,
             "camera" : camera,
             "image_stack" : [],
             "metric_stack" : [],
@@ -642,16 +598,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             "sensorless_correct_coef" : np.zeros(n_modes),          # Measured aberrations
             "z_steps" : np.linspace(self.sensorless_params["z_min"], self.sensorless_params["z_max"], self.sensorless_params["numMes"]),
             "zernike_applied" : np.zeros((0, n_modes)), # Array of all z aberrations to apply during experiment
-            "metric_calculated" : np.array(()),
-            "originally_enabled_corrections": []
         }
-
-        self.sensorless_data["actuator_offset"] = self.proxy.get_last_actuator_values()
-
-        # Disable all corrections (will be restored at the end)
-        for correction_name in [key for key, value in self.get_corrections().items() if value["enabled"]]:
-            self.sensorless_data["originally_enabled_corrections"].append(correction_name)
-            self.toggle_correction(correction_name, False)
 
         logger.log.debug("Subscribing to camera events")
         # Subscribe to camera events
@@ -675,10 +622,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         logger.log.info("Applying the first Zernike mode")
         # Apply the first Zernike mode
         logger.log.debug(self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :])
-        self.set_phase(
-            self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :],
-            offset=self.sensorless_data["actuator_offset"],
-        )
+        self.set_phase(self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :])
 
         # Take image. This will trigger the iterative sensorless AO correction
         wx.CallAfter(wx.GetApp().Imager.takeImage)
@@ -738,20 +682,16 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         ]
         (
             amp_to_correct,
-            ac_pos_correcting,
-            metrics_calculated,
+            metrics_calculated
         ) = self.proxy.correct_sensorless_single_mode(
             image_stack=current_stack,
             zernike_applied=self.sensorless_data["z_steps"],
             nollIndex=nollInd,
-            offset=self.sensorless_data["actuator_offset"],
             wavelength=500 * 10 ** -9,
             NA=1.1,
             pixel_size=pixelSize,
         )
-        self.sensorless_data["actuator_offset"] = ac_pos_correcting
         self.sensorless_data["sensorless_correct_coef"][nollInd - 1] += amp_to_correct
-        self.sensorless_data["metric_calculated"] = metrics_calculated
         for metric in metrics_calculated:
             self.sensorless_data["metric_stack"].append(metric.astype('float'))
 
@@ -762,10 +702,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 self.correctSensorlessAberation()
 
             # Advance counter by 1 and apply next phase
-            self.set_phase(
-                self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :],
-                offset=self.sensorless_data["actuator_offset"],
-            )
+            self.set_phase(self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :])
 
         else:
             # Once all images have been obtained, unsubscribe
@@ -786,22 +723,13 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                     self.sensorless_data["zernike_applied"],
                     self.sensorless_params["nollZernike"],
                     self.sensorless_data["sensorless_correct_coef"],
-                    self.sensorless_data["actuator_offset"],
                     self.sensorless_data["metric_stack"],
                     self.sensorless_data["z_steps"]
                 )
 
-            logger.log.debug(
-                "Actuator positions applied: %s", self.sensorless_data["actuator_offset"]
-            )
-
-            # Record AO correction
+            # Set the sensorless AO correction and enable it
             ao_correction = self.sensorless_data["sensorless_correct_coef"] * -1.0
             self.set_correction("sensorless", modes=ao_correction)
-
-            # Restore the original corrections and enable the sensorless one
-            for correction_name in self.sensorless_data["originally_enabled_corrections"]:
-                self.toggle_correction(correction_name, True)
             self.toggle_correction("sensorless", True)
             self.refresh_corrections()
 

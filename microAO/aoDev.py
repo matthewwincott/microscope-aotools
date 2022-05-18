@@ -1035,10 +1035,9 @@ class AdaptiveOpticsDevice(Device):
         nollIndex,
         wavelength,
         NA,
-        pixel_size,
-        offset=None,
+        pixel_size
     ):
-        numActuators, nzernike = np.shape(self.get_controlMatrix())
+        numActuators, _ = np.shape(self.get_controlMatrix())
         z_amps = np.zeros(numActuators)
         amp_to_correct, metrics = aoAlg.find_zernike_amp_sensorless(
             image_stack,
@@ -1056,8 +1055,4 @@ class AdaptiveOpticsDevice(Device):
             _logger.info("Amplitude magnitude too large. Defaulting to 0.")
             amp_to_correct = 0
         z_amps[nollIndex - 1] = -1.0 * amp_to_correct
-        if np.any(offset) == None:
-            ac_pos_correcting = self.set_phase(z_amps)
-        else:
-            ac_pos_correcting = self.set_phase(z_amps, offset=offset)
-        return amp_to_correct, ac_pos_correcting, metrics
+        return amp_to_correct, metrics
