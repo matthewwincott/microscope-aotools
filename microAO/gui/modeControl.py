@@ -132,6 +132,10 @@ class _Mode(wx.Panel):
 
         self.SetValue(self.value, quiet=True)
 
+    def UpdateSliderRange(self):
+        self._slider_min.ChangeValue(str(min(self._slider_min.value, self.value)))
+        self._slider_max.ChangeValue(str(max(self._slider_max.value, self.value)))
+
     def GetValue(self):
         return self._val.GetValue()
 
@@ -277,12 +281,14 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
             mode_control = self._mode_controls[i]
             if value != mode_control.value and not mode_control.focus:
                 mode_control.SetValue(value, quiet=True)
+                mode_control.UpdateSliderRange()
                 mode_control.UpdateValueRanges()
     
     def RefreshModes(self):
         modes = self.GetModes()
         self._device.set_correction("mode control", modes)
-        self._device.refresh_corrections()
+        if self._device.get_corrections()["mode control"]["enabled"]:
+            self._device.refresh_corrections()
 
     def Reset(self, quiet=False):
         for mode_control in self._mode_controls:
