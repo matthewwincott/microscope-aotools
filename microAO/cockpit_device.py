@@ -588,7 +588,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         n_actuators = control_matrix.shape[0]
         n_modes = control_matrix.shape[1]
 
-
         # Shared state for the new image callbacks during sensorless
         self.sensorless_data = {
             "camera" : camera,
@@ -622,7 +621,10 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         logger.log.info("Applying the first Zernike mode")
         # Apply the first Zernike mode
         logger.log.debug(self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :])
-        self.set_phase(self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :])
+        self.set_phase(
+            self.sensorless_data["sensorless_correct_coef"] * -1.0 +
+            self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :]
+        )
 
         # Take image. This will trigger the iterative sensorless AO correction
         wx.CallAfter(wx.GetApp().Imager.takeImage)
@@ -702,7 +704,11 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 self.correctSensorlessAberation()
 
             # Advance counter by 1 and apply next phase
-            self.set_phase(self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :])
+            self.set_phase(
+                self.sensorless_data["sensorless_correct_coef"] * -1.0 +
+                self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :]
+            )
+
 
         else:
             # Once all images have been obtained, unsubscribe
