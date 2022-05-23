@@ -363,6 +363,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
 
     def _on_phase_change(self):
         corrections = self._device.get_corrections(include_default=True)
+        del corrections["mode control"]
         modes = np.zeros(self._device.no_actuators) + sum(
             [
                 np.array(correction["modes"])
