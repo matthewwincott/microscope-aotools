@@ -27,6 +27,8 @@ _DEFAULT_ZERNIKE_MODE_NAMES = {
 
 
 class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
+    _MIN_AMPLITUDE = 0.5
+
     def __init__(self, parent, device):
         super().__init__(parent)
 
@@ -306,7 +308,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         self.SetupScrolling()
 
     def _on_amplitude(self, event):
-        new_amplitude = abs(self._amplitude.value)
+        new_amplitude = max(abs(self._amplitude.value), self._MIN_AMPLITUDE)
         last_amplitude = float(
             next(iter(self._mode_controls.values()))[4].GetLabelText()
         )
@@ -375,15 +377,19 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
                 if correction["enabled"] and correction["modes"] is not None
             ]
         )
+        # Calculate new amplitude to the nearest 0.5
+        new_amplitude = max(
+            np.ceil(np.max(np.abs(modes)) * 2) / 2,
+            self._MIN_AMPLITUDE
+        )
         # Process each mode
-        mode_max = np.ceil(np.max(np.abs(modes)) * 2) / 2
         for index, value in enumerate(modes):
             mode_number = index + 1
             # Update min/max labels
-            self._mode_controls[mode_number][7].SetLabel(str(-mode_max))
-            self._mode_controls[mode_number][9].SetLabel(str(mode_max))
+            self._mode_controls[mode_number][7].SetLabel(str(-new_amplitude))
+            self._mode_controls[mode_number][9].SetLabel(str(new_amplitude))
             # Update mode indicator
-            self._mode_controls[mode_number][8].Update(value, mode_max)
+            self._mode_controls[mode_number][8].Update(value, new_amplitude)
             # Update text field
             self._mode_controls[mode_number][10].SetLabel(f"{value:.3f}")
 
