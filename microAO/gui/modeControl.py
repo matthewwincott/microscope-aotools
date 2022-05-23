@@ -1,14 +1,10 @@
-
-from cockpit import events
-
 import wx
-import wx.lib.newevent
 import wx.lib.scrolledpanel
-
 import numpy as np
-
-from microAO.events import *
-from microAO.gui.common import FloatCtrl, FilterModesCtrl
+import cockpit
+import microAO
+import microAO.events
+import microAO.gui.common
 
 
 _DEFAULT_ZERNIKE_MODE_NAMES = {
@@ -29,208 +25,106 @@ _DEFAULT_ZERNIKE_MODE_NAMES = {
     15: "Quadrafoil (O)",
 }
 
-ModeChangeEvent, EVT_MODE_CHANGED = wx.lib.newevent.NewEvent()
-
-class _Mode(wx.Panel):
-    """Manual mode selection GUI."""
-
-    def __init__(self, parent, id, value=0):
-        super().__init__(parent)
-
-        # id to identify mode
-        self.id = id
-
-        # Mode value
-        self.value = value
-
-        # Store focus state
-        self.focus = False
-
-        row_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        
-        # Label for mode
-        mode_index = self.id+1
-        try:
-            mode_label = _DEFAULT_ZERNIKE_MODE_NAMES[mode_index]
-        except KeyError:
-            mode_label = ""
-
-        self._mode_index = wx.StaticText(self, label=str(mode_index), size=wx.Size(30,-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
-        self._mode_label = wx.StaticText(self, label=mode_label, size=wx.Size(120,-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
-
-        # Mode slider: drag to set mode
-        default_range = 1.5   # range of slider
-        self._slider = wx.Slider(self, value=0, minValue=-100, maxValue=100, size=wx.Size(200,-1))
-        self._slider.Bind(wx.EVT_SCROLL, self.OnSlider)
-
-        # Adjust mode adjustment range. Influences range of slider.
-        self._slider_min = FloatCtrl(self, wx.ID_ANY, value="{}".format(-default_range), size=wx.Size(50,-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
-        self._slider_max = FloatCtrl(self, wx.ID_ANY, value="{}".format(default_range), size=wx.Size(50,-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
-        
-        self._slider_min.Bind(wx.EVT_TEXT, self.UpdateValueRanges)
-        self._slider_max.Bind(wx.EVT_TEXT, self.UpdateValueRanges)
-
-        # Current mode value
-        self._val = wx.SpinCtrlDouble(self, initial=0, inc=0.001, size=wx.Size(160,-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
-        self._val.SetDigits(4)
-        self.UpdateValueRanges()
-        self._val.SetValue(self.value)
-        self._val.Bind(wx.EVT_SPINCTRLDOUBLE, self.OnModeValueChange)
-        self._val.Bind(wx.EVT_SET_FOCUS, self.OnModeGetFocus)
-        self._val.Bind(wx.EVT_KILL_FOCUS, self.OnModeLoseFocus)
-
-        # Layout
-        row_sizer.Add(self._mode_index, wx.SizerFlags().CentreVertical())
-        row_sizer.Add(self._mode_label, wx.SizerFlags().CentreVertical())
-        row_sizer.Add(self._slider_min, wx.SizerFlags().Expand())
-        row_sizer.Add(self._slider, wx.SizerFlags().Expand())
-        row_sizer.Add(self._slider_max, wx.SizerFlags().Expand())
-        row_sizer.Add(self._val, wx.SizerFlags().Expand())
-
-        # Set widget sizer
-        self.SetSizerAndFit(row_sizer)
-
-    def OnSlider(self, evt):
-        # Assign focus to control if sliding
-        self.focus = True
-
-        # Set value
-        try:
-            val = (self._slider.GetValue()+100)/200 * (self._slider_max.value - self._slider_min.value) + self._slider_min.value
-            self.SetValue(val)
-        except TypeError:
-            pass
-
-        # Reset slider and ranges when slide end (mouse released)
-        if not wx.GetMouseState().LeftIsDown():
-            # Lose focus as released
-            self.focus = False
-
-    def OnModeValueChange(self, evt):
-        new_val = self._val.GetValue()
-        self.UpdateValueRanges(new_val)
-        self.SetValue(new_val)
-
-    def OnRangeChange(self, evt):
-        self.UpdateValueRanges()
-        evt.Skip()
-    
-    def OnModeGetFocus(self, evt):
-        self.focus = True
-
-    def OnModeLoseFocus(self, evt):
-        self.focus = False
-
-    def UpdateValueRanges(self, middle=None, range=None):
-        min_val =  self._slider_min.value
-        if min_val is not None:
-            self._val.SetMin(min_val)
-
-        max_val = self._slider_max.value
-        if max_val is not None:
-            self._val.SetMax(max_val)
-
-        self.SetValue(self.value, quiet=True)
-
-    def UpdateSliderRange(self):
-        self._slider_min.ChangeValue(str(min(self._slider_min.value, self.value)))
-        self._slider_max.ChangeValue(str(max(self._slider_max.value, self.value)))
-
-    def GetValue(self):
-        return self._val.GetValue()
-
-    def SetValue(self, val, quiet=False):
-        """ Set control value 
-
-            Sets control value. Emits mode change event by default, a quiet flag can be 
-            used to override this behaviour.        
-        """
-        # Set value property
-        self.value = val
-
-        # Set value control
-        self._val.SetValue(val)
-        
-        # Set slider control value
-        slider_val = 200 * (val - self._slider_min.value)/(self._slider_max.value - self._slider_min.value) - 100 
-        self._slider.SetValue(slider_val)
-
-        # Emit mode change event, if required
-        if not quiet:
-            evt = ModeChangeEvent(mode=self.id, value= self.value)
-            wx.PostEvent(self, evt)
-
-    @property
-    def value(self):
-        return self._value
-
-    @value.setter
-    def value(self, val):
-        self._value = val
 
 class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
     def __init__(self, parent, device):
         super().__init__(parent)
 
-        # Set attributes
         self._device = device
-        control_matrix = self._device.proxy.get_controlMatrix()
-        self._n_modes = control_matrix.shape[1]
 
         # Create root panel and sizer
-        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer = wx.GridBagSizer()
+        sizer.SetCols(6)
+        sizer.AddGrowableCol(3)
+        row_counter = 0
 
         # Reset button
         reset_btn = wx.Button(self, label="Reset")
-        reset_btn.Bind(wx.EVT_BUTTON, self.OnReset)
-        sizer.Add(reset_btn, 0, wx.ALL, 5)
+        reset_btn.Bind(wx.EVT_BUTTON, self._on_reset)
+        sizer.Add(
+            reset_btn,
+            wx.GBPosition(row_counter, 0),
+            wx.GBSpan(1, 6),
+            wx.ALL,
+            5,
+        )
+        row_counter += 1
 
-        # Filter modes control
-        filter_modes_lbl = wx.StaticText(self, label="Mode filter")
-        self.filter_modes = FilterModesCtrl(self)
-        self.filter_modes.ChangeValue("{}-{}".format(1, self._n_modes))
-        self.filter_modes.Bind(wx.EVT_TEXT, self.OnFilterModes)
+        # Mode filter
         hbox = wx.BoxSizer(wx.HORIZONTAL)
-        hbox.Add(filter_modes_lbl, wx.SizerFlags().Centre().Border(wx.RIGHT, 8))
-        hbox.Add(self.filter_modes, wx.SizerFlags().Centre())
-        sizer.Add(hbox, wx.SizerFlags().Border(wx.BOTTOM, 8))
+        filter_modes_lbl = wx.StaticText(self, label="Mode filter:")
+        self.filter_modes = microAO.gui.common.FilterModesCtrl(
+            self, value="{}-{}".format(1, self._device.no_actuators)
+        )
+        self.filter_modes.Bind(wx.EVT_TEXT, self._on_filter_modes)
+        hbox.Add(filter_modes_lbl, 0)
+        hbox.Add(self.filter_modes, 0, wx.LEFT, 10)
+        sizer.Add(
+            hbox, wx.GBPosition(row_counter, 0), wx.GBSpan(1, 6), wx.ALL, 5
+        )
+        row_counter += 1
+
+        # Amplitude field
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+        amplitude_label = wx.StaticText(self, label="Amplitude:")
+        self._amplitude = microAO.gui.common.FloatCtrl(
+            self, value="1.5", style=wx.TE_PROCESS_ENTER
+        )
+        self._amplitude.Bind(wx.EVT_TEXT_ENTER, self._on_amplitude)
+        self._amplitude.Bind(wx.EVT_KILL_FOCUS, self._on_amplitude)
+        hbox.Add(amplitude_label, 0)
+        hbox.Add(self._amplitude, 0, wx.LEFT, 10)
+        sizer.Add(
+            hbox, wx.GBPosition(row_counter, 0), wx.GBSpan(1, 6), wx.ALL, 5
+        )
+        row_counter += 1
+
+        # Spacer
+        sizer.Add(0, 10, wx.GBPosition(row_counter, 0), wx.GBSpan(1, 6))
+        row_counter += 1
 
         # Set headings
-        heading_sizer = wx.BoxSizer(wx.HORIZONTAL)
-
-        headings = [
-            ("", 150), 
-            ("Min", 50), 
-            ("Control", 200), 
-            ("Max", 50), 
-            ("Value", 160)
-        ]
-
-        font = wx.Font( wx.FontInfo(10).Bold())
-        flags = wx.SizerFlags().Centre()
-
+        headings = (
+            ("Mode", wx.GBPosition(row_counter, 0), wx.GBSpan(1, 2)),
+            ("Min", wx.GBPosition(row_counter, 2), wx.GBSpan(1, 1)),
+            ("Control", wx.GBPosition(row_counter, 3), wx.GBSpan(1, 1)),
+            ("Max", wx.GBPosition(row_counter, 4), wx.GBSpan(1, 1)),
+            ("Value", wx.GBPosition(row_counter, 5), wx.GBSpan(1, 1)),
+        )
+        row_counter += 1
+        font = wx.Font(wx.FontInfo(10).Bold())
         for heading in headings:
-            heading_widget = wx.StaticText(self, label=heading[0], size=wx.Size(heading[1],-1), style=(wx.ALIGN_CENTRE_HORIZONTAL|wx.ST_NO_AUTORESIZE))
+            heading_widget = wx.StaticText(
+                self, label=heading[0], style=wx.ALIGN_CENTRE_HORIZONTAL
+            )
             heading_widget.SetFont(font)
-            heading_sizer.Add(heading_widget, 0, wx.CENTER | wx.BOTTOM, 8)
-        sizer.Add(heading_sizer, 0, wx.BOTTOM, 8)
+            sizer.Add(
+                heading_widget,
+                heading[1],
+                heading[2],
+                wx.EXPAND | wx.ALIGN_CENTRE_VERTICAL | wx.BOTTOM,
+                5,
+            )
 
         # Add control per mode
-        modes = np.zeros(self._n_modes)
+        modes = np.zeros(self._device.no_actuators)
         last_modes = self._device.proxy.get_last_modes()
         if last_modes is not None:
             modes += last_modes
+        self._mode_controls = {}
+        for mode_index, mode_value in enumerate(modes):
+            mode_number = mode_index + 1
+            # Create the mode controls
+            (
+                self._mode_controls[mode_number],
+                new_rows,
+            ) = self._create_mode_controls(
+                mode_number, grid=sizer, row=row_counter
+            )
+            row_counter += new_rows
+            # Initialise value
+            self._synchronised_update(mode_number, mode_value)
 
-        self._mode_controls = []
-        for i, mode in enumerate(modes):
-            mode_control = _Mode(self, id=i, value=mode)
-            mode_control.Bind(EVT_MODE_CHANGED, self.OnMode)
-            self._mode_controls.append(mode_control)
-            sizer.Add(mode_control, 0)
-
-        # Show only filtered modes
-        self.FilterModes()
-        
         # Set sizer and finalise layout
         self.SetSizerAndFit(sizer)
         self.SetupScrolling()
@@ -240,69 +134,275 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         self._device.set_correction("mode control")
 
         # Subscribe to pubsub events
-        events.subscribe(PUBSUB_SET_PHASE, self.HandleSetPhase)
+        cockpit.events.subscribe(
+            microAO.events.PUBSUB_SET_PHASE, self._on_phase_change
+        )
 
         # Bind close event
-        self.Bind(wx.EVT_CLOSE, self.OnClose)
+        self.Bind(wx.EVT_CLOSE, self._on_close)
 
-    def FilterModes(self):
+    def _create_mode_controls(self, mode_number, grid, row):
+        # Create widget table with the following columns: widget, column, span,
+        # flags, border
+        widgets_data = (
+            (
+                wx.StaticText(
+                    self,
+                    label=str(mode_number),
+                    style=wx.ALIGN_CENTRE_HORIZONTAL,
+                ),
+                wx.GBPosition(row, 0),
+                wx.GBSpan(1, 1),
+                wx.EXPAND | wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.RIGHT,
+                4,
+            ),
+            (
+                wx.StaticText(
+                    self,
+                    label=_DEFAULT_ZERNIKE_MODE_NAMES.get(mode_number, ""),
+                    style=wx.ALIGN_CENTRE_HORIZONTAL,
+                ),
+                wx.GBPosition(row, 1),
+                wx.GBSpan(1, 1),
+                wx.EXPAND | wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.RIGHT,
+                4,
+            ),
+            (
+                wx.StaticText(
+                    self,
+                    label=str(-self._amplitude.value),
+                    style=wx.ALIGN_CENTRE_HORIZONTAL,
+                ),
+                wx.GBPosition(row, 2),
+                wx.GBSpan(1, 1),
+                wx.EXPAND | wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.RIGHT,
+                4,
+            ),
+            (
+                wx.Slider(self, value=0, minValue=-100, maxValue=100),
+                wx.GBPosition(row, 3),
+                wx.GBSpan(1, 1),
+                wx.EXPAND | wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.RIGHT,
+                4,
+            ),
+            (
+                wx.StaticText(
+                    self,
+                    label=str(self._amplitude.value),
+                    style=wx.ALIGN_CENTRE_HORIZONTAL,
+                ),
+                wx.GBPosition(row, 4),
+                wx.GBSpan(1, 1),
+                wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.RIGHT,
+                4,
+            ),
+            (
+                wx.SpinCtrlDouble(
+                    self,
+                    initial=0.0,
+                    min=-self._amplitude.value,
+                    max=self._amplitude.value,
+                    inc=0.01,
+                    style=wx.TE_PROCESS_ENTER,
+                ),
+                wx.GBPosition(row, 5),
+                wx.GBSpan(1, 1),
+                wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.RIGHT,
+                4,
+            ),
+            (
+                wx.GBSizerItem(
+                    0, 10, wx.GBPosition(row + 1, 0), wx.GBSpan(1, 6)
+                ),
+            ),
+            (
+                wx.StaticText(
+                    self, label="-1.0", style=wx.ALIGN_CENTRE_HORIZONTAL
+                ),
+                wx.GBPosition(row + 2, 2),
+                wx.GBSpan(1, 1),
+                wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.RIGHT,
+                4,
+            ),
+            (
+                microAO.gui.common.ModeIndicator(self, size_hints=(-1, 7)),
+                wx.GBPosition(row + 2, 3),
+                wx.GBSpan(1, 1),
+                wx.EXPAND | wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.RIGHT,
+                8,
+            ),
+            (
+                wx.StaticText(
+                    self, label="1.0", style=wx.ALIGN_CENTRE_HORIZONTAL
+                ),
+                wx.GBPosition(row + 2, 4),
+                wx.GBSpan(1, 1),
+                wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.RIGHT,
+                4,
+            ),
+            (
+                wx.StaticText(
+                    self, label="0.000", style=wx.ALIGN_CENTRE_HORIZONTAL
+                ),
+                wx.GBPosition(row + 2, 5),
+                wx.GBSpan(1, 1),
+                wx.ALIGN_CENTRE_VERTICAL | wx.LEFT | wx.RIGHT,
+                4,
+            ),
+            (
+                wx.GBSizerItem(
+                    0, 10, wx.GBPosition(row + 3, 0), wx.GBSpan(1, 6)
+                ),
+            ),
+        )
+        # Style the mode indicator labels
+        widgets_data[7][0].SetForegroundColour(wx.Colour(128, 128, 128))
+        widgets_data[9][0].SetForegroundColour(wx.Colour(128, 128, 128))
+        widgets_data[10][0].SetForegroundColour(wx.Colour(128, 128, 128))
+        # Event binding
+        widgets_data[3][0].Bind(
+            wx.EVT_SCROLL,
+            lambda event: self._on_slider(
+                mode_number, event.GetEventObject().GetValue()
+            ),
+        )
+        widgets_data[5][0].Bind(
+            wx.EVT_SPINCTRLDOUBLE,
+            lambda event: self._on_mode_value(
+                mode_number, event.GetEventObject().GetValue()
+            ),
+        )
+        widgets_data[5][0].Bind(
+            wx.EVT_TEXT_ENTER,
+            lambda event: self._on_mode_value(
+                mode_number, float(event.GetString())
+            ),
+        )
+        # Layout
+        for widget_data in widgets_data:
+            # Add the widget
+            grid.Add(*widget_data)
+        return [widget_data[0] for widget_data in widgets_data], 4
+
+    def _on_reset(self, _):
+        for mode_number in self._mode_controls.keys():
+            self._synchronised_update(mode_number, 0.0)
+        self._apply_modes()
+
+    def _on_filter_modes(self, _):
         # Show only filtered modes
         modes_filtered = self.filter_modes.GetValue()
-        for control in self._mode_controls:
-            if control.id+1 in modes_filtered:
-                control.Show()
+        for mode_number in self._mode_controls.keys():
+            if mode_number in modes_filtered:
+                for control in self._mode_controls[mode_number]:
+                    control.Show(True)
             else:
-                control.Hide()
-
-    def OnFilterModes(self, evt):
-        self.FilterModes()
+                for control in self._mode_controls[mode_number]:
+                    control.Show(False)
         self.SetupScrolling()
 
-    def OnMode(self, evt):
-        self.RefreshModes()
+    def _on_amplitude(self, event):
+        new_amplitude = abs(self._amplitude.value)
+        last_amplitude = float(
+            next(iter(self._mode_controls.values()))[4].GetLabelText()
+        )
+        # Do nothing if the amplitude has not changed
+        if new_amplitude == last_amplitude:
+            event.Skip()
+            return
+        # Ensure text control shows a positive value
+        self._amplitude.ChangeValue(str(new_amplitude))
+        # Ensure amplitude is no less than the maximum mode value
+        max_mode_value = 0.0
+        max_mode_number = 1
+        for mode_number in self._mode_controls.keys():
+            mode_value = abs(self._mode_controls[mode_number][5].GetValue())
+            if mode_value > max_mode_value:
+                max_mode_number = mode_number
+                max_mode_value = mode_value
+        if new_amplitude < max_mode_value:
+            # Restore the last amplitude, raise a warning message, and exit
+            self._amplitude.ChangeValue(str(last_amplitude))
+            wx.MessageDialog(
+                self,
+                message=(
+                    "Failed to set amplitude because the requested value "
+                    f"({new_amplitude}) is less than the value for mode "
+                    f"{max_mode_number}: {max_mode_value}."
+                ),
+                style=wx.ICON_EXCLAMATION | wx.STAY_ON_TOP | wx.OK,
+            ).ShowModal()
+            event.Skip()
+            return
+        # Update all modes' controls
+        for mode_number in self._mode_controls.keys():
+            # Change min/max labels
+            self._mode_controls[mode_number][2].SetLabel(str(-new_amplitude))
+            self._mode_controls[mode_number][4].SetLabel(str(new_amplitude))
+            # Change value's min/max
+            mode_value = self._mode_controls[mode_number][5].GetValue()
+            self._mode_controls[mode_number][5].SetMin(-new_amplitude)
+            self._mode_controls[mode_number][5].SetMax(new_amplitude)
+            # Change slider position
+            self._mode_controls[mode_number][3].SetValue(
+                round((mode_value / new_amplitude) * 100.0)
+            )
+        event.Skip()
 
-    def OnReset(self, evt):
-        self.Reset()
+    def _on_slider(self, mode_number, slider_value):
+        self._synchronised_update(
+            mode_number, (slider_value / 100) * self._amplitude.value
+        )
+        # Change value
+        self._apply_modes()
 
-    def OnClose(self):
-        # Unsubscribe from pubsub events
-        events.unsubscribe(PUBSUB_SET_PHASE, self.HandleSetPhase)
-        
-    def GetModes(self):
-        modes = []
-        for mode_control in self._mode_controls:
-            modes.append(mode_control.value)
-        
-        return modes
+    def _on_mode_value(self, mode_number, mode_value):
+        self._synchronised_update(mode_number, mode_value)
+        # Change slider
+        self._apply_modes()
 
-    def SetModes(self, modes):
-        # Update each mode
-        for i, value in enumerate(modes):
-            mode_control = self._mode_controls[i]
-            if value != mode_control.value and not mode_control.focus:
-                mode_control.SetValue(value, quiet=True)
-                mode_control.UpdateSliderRange()
-                mode_control.UpdateValueRanges()
-    
-    def RefreshModes(self):
-        modes = self.GetModes()
-        self._device.set_correction("mode control", modes)
-        if self._device.get_corrections()["mode control"]["enabled"]:
-            self._device.refresh_corrections()
-
-    def Reset(self, quiet=False):
-        for mode_control in self._mode_controls:
-            mode_control.SetValue(0, quiet=quiet)
-
-    def HandleSetPhase(self):
+    def _on_phase_change(self):
         corrections = self._device.get_corrections(include_default=True)
-        if corrections["mode control"]["enabled"]:
-            modes = np.zeros(self._n_modes) + sum([
+        modes = np.zeros(self._device.no_actuators) + sum(
+            [
                 np.array(correction["modes"])
                 for correction in corrections.values()
                 if correction["enabled"] and correction["modes"] is not None
-            ])
-            self.SetModes(modes)
+            ]
+        )
+        # Process each mode
+        mode_max = np.ceil(np.max(np.abs(modes)) * 2) / 2
+        for index, value in enumerate(modes):
+            mode_number = index + 1
+            # Update min/max labels
+            self._mode_controls[mode_number][7].SetLabel(str(-mode_max))
+            self._mode_controls[mode_number][9].SetLabel(str(mode_max))
+            # Update mode indicator
+            self._mode_controls[mode_number][8].Update(value, mode_max)
+            # Update text field
+            self._mode_controls[mode_number][10].SetLabel(f"{value:.3f}")
+
+    def _on_close(self):
+        # Unsubscribe from pubsub events
+        cockpit.events.unsubscribe(
+            microAO.events.PUBSUB_SET_PHASE, self._on_phase_change
+        )
+
+    def _synchronised_update(self, mode_number, mode_value):
+        # Change value
+        self._mode_controls[mode_number][5].SetValue(mode_value)
+        # Update the slider position
+        self._mode_controls[mode_number][3].SetValue(
+            round((mode_value / self._amplitude.value) * 100.0)
+        )
+
+    def _apply_modes(self):
+        modes = []
+        for i in range(self._device.no_actuators):
+            modes.append(self._mode_controls[i + 1][5].GetValue())
+        self._device.set_correction("mode control", modes)
+        if self._device.get_corrections()["mode control"]["enabled"]:
+            self._device.refresh_corrections()
 
 
 class ModesControl(wx.Frame):
@@ -314,9 +414,4 @@ class ModesControl(wx.Frame):
         self.SetSizer(self._sizer)
         self.SetMinSize(wx.Size(650, 300))
         self.SetSize(wx.Size(650, 650))
-        self.SetTitle('DM mode control')
-        self.Bind(wx.EVT_CLOSE, self.OnClose)
-    
-    def OnClose(self, evt):
-        self._panel.OnClose()
-        evt.Skip()
+        self.SetTitle("DM mode control")

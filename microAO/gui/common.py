@@ -1,6 +1,7 @@
 import re
-
 import wx
+import numpy
+import matplotlib.cm
 
 from cockpit.gui.guiUtils import FLOATVALIDATOR
 
@@ -163,3 +164,88 @@ class MinMaxSliderCtrl(wx.Panel):
     @value.setter
     def value(self, val):
         self._value = val
+
+class ModeIndicator(wx.Panel):
+    """A simple widget used to indicate the value of a mode.
+
+    Args:
+        parent: parent widget.
+        size_hints: (width, height) tuple that specifies the preferred size of
+            the widget. Zero and negative values lead to using the widget's
+            client size.
+        norm_range: normalisation range of the mode value; (-1, 1) for values
+            which negative numbers and (0, 1) otherwise.
+        cmap_name: name of the colour map; check matplotlib for valid names
+
+    """
+
+    def __init__(
+        self,
+        parent,
+        size_hints=(-1, -1),
+        norm_range=(-1, 1),
+        cmap_name="coolwarm",
+        *args,
+        **kwargs
+    ):
+        super().__init__(parent, *args, **kwargs)
+        self._size_hints = size_hints
+        self._norm_range = norm_range
+        self._value_norm = 0
+        self._cmap = matplotlib.cm.get_cmap(cmap_name)
+        self._colour = wx.Colour(
+            (numpy.array(self._cmap(0.5)) * 255).astype(int)
+        )
+        self.Bind(wx.EVT_PAINT, self._on_paint)
+        self.Bind(wx.EVT_SIZE, self._on_size)
+        self.SetMinSize(self._size_hints)
+        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+
+    def _on_paint(self, _):
+        dc = wx.BufferedPaintDC(self)
+        dc.Clear()
+        # Get parameters
+        width, height = self.GetClientSize()
+        x_offset = 0
+        y_offset = 0
+        if self._size_hints[0] > 0:
+            x_offset = width - self._size_hints[0]
+            width = self._size_hints[0]
+        if self._size_hints[1] > 0:
+            y_offset = (height - self._size_hints[1]) // 2
+            height = self._size_hints[1]
+        rect_width = round(0.025 * width)  # 2.5% of total width
+        # Draw middle line
+        dc.SetBrush(wx.LIGHT_GREY_BRUSH)
+        dc.SetPen(wx.LIGHT_GREY_PEN)
+        dc.DrawLine(
+            x_offset,
+            y_offset + height // 2,
+            x_offset + width,
+            y_offset + height // 2
+        )
+        # Draw rectangle
+        dc.SetBrush(wx.Brush(self._colour))
+        dc.SetPen(wx.Pen(self._colour))
+        dc.DrawRectangle(
+            x_offset + round(
+                numpy.interp(self._value_norm, self._norm_range, (0, width)) -
+                rect_width / 2.0
+            ),
+            y_offset,
+            rect_width,
+            height
+        )
+        return
+
+    def _on_size(self, _):
+        self.Refresh()
+
+    def Update(self, value, amplitude):
+        # Normalise the value
+        self._value_norm = numpy.interp(value, (-amplitude, amplitude), self._norm_range)
+        # Interpolate the value to the colormap range of [0; 1]
+        self._colour = wx.Colour(
+            (numpy.array(self._cmap(numpy.interp(value, (-amplitude, amplitude), (0, 1)))) * 255).astype(int)
+        )
+        self.Refresh()
