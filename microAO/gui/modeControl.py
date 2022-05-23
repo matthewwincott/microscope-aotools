@@ -135,7 +135,11 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
 
         # Subscribe to pubsub events
         cockpit.events.subscribe(
-            microAO.events.PUBSUB_SET_PHASE, self._on_phase_change
+            microAO.events.PUBSUB_SET_PHASE, self._on_new_modes
+        )
+        cockpit.events.subscribe(
+            microAO.events.PUBUSB_CHANGED_CORRECTION,
+            lambda *_: self._on_new_modes
         )
 
         # Bind close event
@@ -361,7 +365,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         # Change slider
         self._apply_modes()
 
-    def _on_phase_change(self):
+    def _on_new_modes(self):
         corrections = self._device.get_corrections(include_default=True)
         del corrections["mode control"]
         modes = np.zeros(self._device.no_actuators) + sum(
