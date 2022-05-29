@@ -34,7 +34,7 @@ import logging
 
 _logger = logging.getLogger(__name__)
 
-def gaussian_funcion(x, offset, normalising, mean, std_dev):
+def gaussian_function(x, offset, normalising, mean, std_dev):
     return (offset - normalising) + (normalising * np.exp((-(x - mean) ** 2) / (2 * std_dev ** 2)))
 
 metric_function = {
@@ -338,47 +338,36 @@ class AdaptiveOpticsFunctions():
         return metric
 
     def find_zernike_amp_sensorless(self, image_stack, zernike_amplitudes, **kwargs):
+        # Calculate metrics
         metrics_measured = []
-        for ii in range(image_stack.shape[0]):
-            print("Measuring metric %i/%i" % (ii + 1, image_stack.shape[0]))
-            metric_measured = metric_function[self.metric](image_stack[ii, :, :], **kwargs)
-            metrics_measured.append(metric_measured)
+        for image in image_stack:
+            metrics_measured.append(
+                metric_function[self.metric](image, **kwargs)
+            )
         metrics_measured = np.asarray(metrics_measured)
-
-        print("Metrics measured")
-
-        print("Fitting metric polynomial")
+        # Calculate boundaries as min/max values +/- quarter of the range
         z_l_bound = np.min(zernike_amplitudes) - (0.25 * (np.max(zernike_amplitudes) - np.min(zernike_amplitudes)))
         z_u_bound = np.max(zernike_amplitudes) + (0.25 * (np.max(zernike_amplitudes) - np.min(zernike_amplitudes)))
+        # Fit
         try:
-            [offset, normalising, mean, std_dev], pcov = curve_fit(gaussian_funcion, zernike_amplitudes, metrics_measured,
-                                                                   bounds=([np.NINF, 0, z_l_bound, np.NINF],
-                                                                           [np.Inf, np.Inf, z_u_bound, np.Inf]))
-            _logger.info("Zernike amplitudes: %s" % zernike_amplitudes)
-            _logger.info("Metrics measured: %s" % metrics_measured)
-            print("Calculating amplitude present")
+            popt, _ = curve_fit(
+                gaussian_function,
+                zernike_amplitudes,
+                metrics_measured,
+                bounds=(
+                    [np.NINF, 0, z_l_bound, np.NINF],
+                    [np.Inf, np.Inf, z_u_bound, np.Inf]
+                )
+            )
+            mean = popt[2]
         except RuntimeError:
             max_from_mean_var = (np.max(metrics_measured) - np.mean(metrics_measured))
             if max_from_mean_var >= 2*np.sqrt(np.var(metrics_measured)):
-                print("Could not accurately fit metric polynomial. Using maximum metric amplitude")
+                # Could not accurately fit metric polynomial => using maximum metric amplitude
                 mean = zernike_amplitudes[metrics_measured == np.max(metrics_measured)]
             else:
-                print("Could not accurately fit metric polynomial. Defaulting to 0 amplitude.")
-                mean = 0
+                # Could not accurately fit metric polynomial => Defaulting to the middle of the range
+                mean = np.mean(zernike_amplitudes)
+            popt = []
 
-        amplitude_present = -1.0 * mean
-        print("Amplitude calculated = %f" % amplitude_present)
-        return amplitude_present, metrics_measured
-
-    def get_zernike_modes_sensorless(self, full_image_stack, full_zernike_applied, nollZernike, **kwargs):
-        numMes = int(full_zernike_applied.shape[0]/nollZernike.shape[0])
-
-        coef = np.zeros(full_zernike_applied.shape[1])
-        for ii in range(nollZernike.shape[0]):
-            image_stack = full_image_stack[ii * numMes:(ii + 1) * numMes,:,:]
-            zernike_applied = full_zernike_applied[ii * numMes:(ii + 1) * numMes,nollZernike[ii]-1]
-            print("Calculating Zernike amplitude %i/%i" %(ii+1, nollZernike.shape[0]))
-            amp, _ = self.find_zernike_amp_sensorless(image_stack, zernike_applied, **kwargs)
-            coef[nollZernike[ii]-1] = amp
-
-        return coef
+        return mean, metrics_measured, popt, gaussian_function

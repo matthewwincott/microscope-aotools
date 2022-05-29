@@ -57,54 +57,6 @@ from microAO.remotez import RemoteZ
 
 aoAlg = AdaptiveOpticsFunctions()
 
-def log_correction_applied(
-    image_stack,
-    zernike_applied,
-    nollZernike,
-    sensorless_correct_coef,
-    metric_stack,
-    z_steps
-):
-    # Derive file path
-    ao_log_filepath = os.path.join(
-        wx.GetApp().Config["log"].getpath("dir"),
-        "sensorless_AO_" + time.strftime("%Y%m%d_%H%M", time.gmtime()) + ".h5",
-    )
-
-    # Write data to file
-    with h5py.File(ao_log_filepath, 'w') as f:
-        # Assemble data to write
-        data = [('timestamp', time.strftime("%Y%m%d_%H%M", time.gmtime())),
-                ('image_stack',np.asarray(image_stack)),
-                ('zernike_applied',zernike_applied),
-                ('nollZernike',nollZernike),
-                ('sensorless_correct_coef',sensorless_correct_coef),
-                ('metric_stack',metric_stack),
-                ('z_steps',z_steps),
-            ]
-        
-        # Write assembled data
-        for datum in data:
-            try:
-                f.create_dataset(datum[0], data=datum[1])
-            except Exception as e:
-                print('Failed to write: {}'.format(datum[0]), e)
-        
-
-def mask_circular(dims, radius=None, centre=None):
-    # Init radius and centre if necessary
-    if centre is None:
-        centre = (dims / 2).astype(int)
-    if radius is None:
-        # Largest circle that could fit in the dimensions
-        radius = min(centre, dims - centre)
-    # Create a meshgrid
-    meshgrid = np.meshgrid(np.arange(dims[0]), np.arange(dims[1]))
-    # Calculate distances from the centre element
-    dist = np.sqrt(((meshgrid - centre.reshape(-1, 1, 1)) ** 2).sum(axis=0))
-    # Return a binary mask for the specified radius
-    return dist <= radius
-
 class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
     RF_DEFAULT_LIMITS = (-1, 1)  # micrometres
     RF_POSHAN_NAME = "2 remote focus"
@@ -132,11 +84,13 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         # Need intial values for sensorless AO
         self.sensorless_params = {
-            "numMes": 9,
-            "num_it": 2,
-            "z_max": 1.5,
-            "z_min": -1.5,
-            "nollZernike": np.asarray([11, 22, 5, 6, 7, 8, 9, 10])
+            "num_meas": 7,
+            "num_reps": 1,
+            "range_max": 1.5,
+            "range_min": -1.5,
+            "modes_subset": [10, 21, 4, 5, 6, 7, 8, 9],
+            "NA": 1.1,
+            "wavelength": 560,
         }
 
         # Shared state for the new image callbacks during sensorless
@@ -439,6 +393,20 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Unwrap the phase
         return aoAlg.unwrap_interferometry(image)
 
+    def _mask_circular(self, dims, radius=None, centre=None):
+        # Init radius and centre if necessary
+        if centre is None:
+            centre = (dims / 2).astype(int)
+        if radius is None:
+            # Largest circle that could fit in the dimensions
+            radius = min(centre, dims - centre)
+        # Create a meshgrid
+        meshgrid = np.meshgrid(np.arange(dims[0]), np.arange(dims[1]))
+        # Calculate distances from the centre element
+        dist = np.sqrt(((meshgrid - centre.reshape(-1, 1, 1)) ** 2).sum(axis=0))
+        # Return a binary mask for the specified radius
+        return dist <= radius
+
     @cockpit.util.threads.callInNewThread
     def calculateControlMatrix(self, actuator_values, file_path_image):
         self.updateROI()
@@ -465,7 +433,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 # Check for discontinuities
                 image_unwrapped_diff = (
                     abs(np.diff(np.diff(image_unwrapped, axis=1), axis=0))
-                    * mask_circular(
+                    * self._mask_circular(
                         np.array(image_unwrapped.shape),
                         radius=min(image_unwrapped.shape) / 2 - 3
                     )[:-1, :-1]
@@ -576,147 +544,172 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
     def correctSensorlessSetup(self, camera):
         logger.log.info("Performing sensorless AO setup")
-        # Note: Default is to correct Primary and Secondary Spherical
-        # aberration and both orientations of coma, astigmatism and
-        # trefoil.
 
         # Check for calibration
         self.checkIfCalibrated()
 
         # Get control matrix details
         control_matrix = self.proxy.get_controlMatrix()
-        n_actuators = control_matrix.shape[0]
         n_modes = control_matrix.shape[1]
+
+        # Get the initial sensorless correction modes
+        init_sensorless = np.zeros(n_modes)
+        corrections = self.get_corrections(include_default=True)
+        if (
+            "sensorless" in corrections
+            and corrections["sensorless"]["enabled"]
+        ):
+            init_sensorless = corrections["sensorless"]["modes"]
 
         # Shared state for the new image callbacks during sensorless
         self.sensorless_data = {
-            "camera" : camera,
-            "image_stack" : [],
-            "metric_stack" : [],
-            "correction_stack" : [],
-            "sensorless_correct_coef" : np.zeros(n_modes),          # Measured aberrations
-            "z_steps" : np.linspace(self.sensorless_params["z_min"], self.sensorless_params["z_max"], self.sensorless_params["numMes"]),
-            "zernike_applied" : np.zeros((0, n_modes)), # Array of all z aberrations to apply during experiment
+            "camera_name": camera.name,
+            "image_stack": [],
+            "metrics_stack": [],
+            "corrections": init_sensorless,
+            "measurement_offsets": np.linspace(
+                self.sensorless_params["range_min"],
+                self.sensorless_params["range_max"],
+                self.sensorless_params["num_meas"],
+            ),
+            "total_measurements": self.sensorless_params["num_meas"]
+            * len(self.sensorless_params["modes_subset"])
+            * self.sensorless_params["num_reps"],
+            "measurement_index": 0,
+            "mode_index": self.sensorless_params["modes_subset"][0],
         }
 
-        logger.log.debug("Subscribing to camera events")
+        # Signal start of sensorless AO routine
+        events.publish(PUBSUB_SENSORLESS_START)
+
+        # Apply the first set of modes
+        new_modes = self.sensorless_data["corrections"].copy()
+        new_modes[self.sensorless_data["mode_index"]] += self.sensorless_data[
+            "measurement_offsets"
+        ][self.sensorless_data["measurement_index"]]
+        self.set_correction("sensorless", new_modes)
+        self.toggle_correction("sensorless", True)
+        self.refresh_corrections()
+
         # Subscribe to camera events
         events.subscribe(
-            events.NEW_IMAGE % self.sensorless_data["camera"].name, self.correctSensorlessImage
-        )
-
-        for ii in range(self.sensorless_params["num_it"]):
-            it_zernike_applied = np.zeros(
-                (self.sensorless_params["numMes"] * self.sensorless_params["nollZernike"].shape[0], self.no_actuators)
-            )
-            for noll_ind in self.sensorless_params["nollZernike"]:
-                ind = np.where(self.sensorless_params["nollZernike"] == noll_ind)[0][0]
-                it_zernike_applied[
-                    ind * self.sensorless_params["numMes"] : (ind + 1) * self.sensorless_params["numMes"], noll_ind - 1
-                ] = self.sensorless_data["z_steps"]
-            self.sensorless_data["zernike_applied"] = np.concatenate(
-                [self.sensorless_data["zernike_applied"], it_zernike_applied]
-            )
-
-        logger.log.info("Applying the first Zernike mode")
-        # Apply the first Zernike mode
-        logger.log.debug(self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :])
-        self.set_phase(
-            self.sensorless_data["sensorless_correct_coef"] * -1.0 +
-            self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :]
+            events.NEW_IMAGE % self.sensorless_data["camera_name"],
+            self.correctSensorlessImage,
         )
 
         # Take image. This will trigger the iterative sensorless AO correction
         wx.CallAfter(wx.GetApp().Imager.takeImage)
 
-    def correctSensorlessImage(self, image, timestamp):
-        del timestamp
-        if len(self.sensorless_data["image_stack"]) < self.sensorless_data["zernike_applied"].shape[0]:
-            logger.log.info(
-                "Correction image %i/%i"
-                % (
-                    len(self.sensorless_data["image_stack"]) + 1,
-                    self.sensorless_data["zernike_applied"].shape[0],
-                )
+    def correctSensorlessImage(self, image, _):
+        # Log the progress
+        logger.log.info(
+            "Correction image %i/%i"
+            % (
+                len(self.sensorless_data["image_stack"]) + 1,
+                self.sensorless_data["total_measurements"],
             )
-            events.publish(
-                events.UPDATE_STATUS_LIGHT,
-                "image count",
-                "Sensorless AO: image %s/%s, mode %s, meas. %s"
-                % (
-                    len(self.sensorless_data["image_stack"]) + 1,
-                    self.sensorless_data["zernike_applied"].shape[0],
-                    self.sensorless_params["nollZernike"][
-                        len(self.sensorless_data["image_stack"])
-                        // self.sensorless_params["numMes"]
-                        % len(self.sensorless_params["nollZernike"])
-                    ],
-                    (len(self.sensorless_data["image_stack"]) + 1) % self.sensorless_params["numMes"] + 1,
-                ),
-            )
-            # Store image for current applied phase
-            self.sensorless_data["image_stack"].append(np.ndarray.tolist(image))
-            wx.CallAfter(self.correctSensorlessProcessing)
-        else:
-            logger.log.error(
-                "Failed to unsubscribe to camera events. Trying again."
-            )
-            events.unsubscribe(
-                events.NEW_IMAGE % self.sensorless_data["camera"].name,
-                self.correctSensorlessImage,
-            )
-            events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
+        )
+        # Update status light
+        events.publish(
+            events.UPDATE_STATUS_LIGHT,
+            "image count",
+            "Sensorless AO: image %s/%s, mode %s, meas. %s"
+            % (
+                len(self.sensorless_data["image_stack"]) + 1,
+                self.sensorless_data["total_measurements"],
+                self.sensorless_data["mode_index"] + 1,
+                self.sensorless_data["measurement_index"] + 1,
+            ),
+        )
+        # Add the image to the stack and request its eventual processing
+        self.sensorless_data["image_stack"].append(image)
+        wx.CallAfter(self.correctSensorlessProcessing)
 
     def correctSensorlessAberation(self):
-        pixelSize = wx.GetApp().Objectives.GetPixelSize() * 10 ** -6
-
-        # Find aberration amplitudes and correct
-        ind = int(len(self.sensorless_data["image_stack"]) / self.sensorless_params["numMes"])
-        nollInd = (
-            np.where(self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]) - 1, :])[
-                0
-            ][0]
-            + 1
+        # Calculate required parameters
+        mode_values = (
+            self.sensorless_data["measurement_offsets"]
+            + self.sensorless_data["corrections"][
+                self.sensorless_data["mode_index"]
+            ]
         )
-        logger.log.debug("Current Noll index being corrected: %i" % nollInd)
-        current_stack = np.asarray(self.sensorless_data["image_stack"])[
-            (ind - 1) * self.sensorless_params["numMes"] : ind * self.sensorless_params["numMes"], :, :
-        ]
+        modes_subset_index = self.sensorless_params["modes_subset"].index(
+            self.sensorless_data["mode_index"]
+        )
+        # Find aberration amplitudes and correct
         (
             amp_to_correct,
-            metrics_calculated
-        ) = self.proxy.correct_sensorless_single_mode(
-            image_stack=current_stack,
-            zernike_applied=self.sensorless_data["z_steps"],
-            nollIndex=nollInd,
-            wavelength=500 * 10 ** -9,
-            NA=1.1,
-            pixel_size=pixelSize,
+            metrics_calculated,
+            optimal_parameters,
+            fitted_function,
+        ) = aoAlg.find_zernike_amp_sensorless(
+            image_stack=self.sensorless_data["image_stack"][
+                -self.sensorless_params["num_meas"] :
+            ],
+            zernike_amplitudes=mode_values,
+            wavelength=self.sensorless_params["wavelength"] * 10 ** -9,
+            NA=self.sensorless_params["NA"],
+            pixel_size=wx.GetApp().Objectives.GetPixelSize() * 10 ** -6,
         )
-        self.sensorless_data["sensorless_correct_coef"][nollInd - 1] += amp_to_correct
-        for metric in metrics_calculated:
-            self.sensorless_data["metric_stack"].append(metric.astype('float'))
+        self.sensorless_data["corrections"][
+            self.sensorless_data["mode_index"]
+        ] = amp_to_correct
+        self.sensorless_data["metrics_stack"].append(
+            metrics_calculated.tolist()
+        )
+        # Signal sensorless results
+        events.publish(
+            PUBSUB_SENSORLESS_RESULTS,
+            {
+                "metrics": metrics_calculated,
+                "mode_values": mode_values,
+                "mode_label": f"Z{self.sensorless_data['mode_index'] + 1}",
+                "measurement_range": self.sensorless_params["range_max"]
+                - self.sensorless_params["range_min"],
+                "optimal_parameters": optimal_parameters,
+                "fitted_function": fitted_function,
+                "correction_amplitude": amp_to_correct,
+            },
+        )
+        # Update indices
+        self.sensorless_data["measurement_index"] = 0
+        modes_subset_index += 1
+        if modes_subset_index == len(self.sensorless_params["modes_subset"]):
+            modes_subset_index = 0
+        self.sensorless_data["mode_index"] = self.sensorless_params[
+            "modes_subset"
+        ][modes_subset_index]
 
     def correctSensorlessProcessing(self):
-        logger.log.info("Processing sensorless image")
-        if len(self.sensorless_data["image_stack"]) < self.sensorless_data["zernike_applied"].shape[0]:
-            if len(self.sensorless_data["image_stack"]) % self.sensorless_params["numMes"] == 0:
+        if (
+            len(self.sensorless_data["image_stack"])
+            < self.sensorless_data["total_measurements"]
+        ):
+            # Increment measurement index
+            self.sensorless_data["measurement_index"] += 1
+            # Correct mode if enough measurements have been taken
+            if (
+                self.sensorless_data["measurement_index"]
+                == self.sensorless_params["num_meas"]
+            ):
                 self.correctSensorlessAberation()
-
-            # Advance counter by 1 and apply next phase
-            self.set_phase(
-                self.sensorless_data["sensorless_correct_coef"] * -1.0 +
-                self.sensorless_data["zernike_applied"][len(self.sensorless_data["image_stack"]), :]
-            )
-
-
+            # Apply next set of modes
+            new_modes = self.sensorless_data["corrections"].copy()
+            new_modes[
+                self.sensorless_data["mode_index"]
+            ] += self.sensorless_data["measurement_offsets"][
+                self.sensorless_data["measurement_index"]
+            ]
+            self.set_correction("sensorless", new_modes)
+            self.refresh_corrections()
         else:
             # Once all images have been obtained, unsubscribe
             logger.log.debug(
-                "Unsubscribing to camera %s events" % self.sensorless_data["camera"].name
+                "Unsubscribing to camera %s events"
+                % self.sensorless_data["camera_name"]
             )
             events.unsubscribe(
-                events.NEW_IMAGE % self.sensorless_data["camera"].name,
+                events.NEW_IMAGE % self.sensorless_data["camera_name"],
                 self.correctSensorlessImage,
             )
             events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
@@ -724,42 +717,65 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             self.correctSensorlessAberation()
 
             if self._log_sensorless_data:
-                log_correction_applied(
+                self._log_correction_applied(
                     self.sensorless_data["image_stack"],
-                    self.sensorless_data["zernike_applied"],
-                    self.sensorless_params["nollZernike"],
-                    self.sensorless_data["sensorless_correct_coef"],
-                    self.sensorless_data["metric_stack"],
-                    self.sensorless_data["z_steps"]
+                    self.sensorless_params["modes_subset"],
+                    self.sensorless_data["corrections"],
+                    self.sensorless_data["metrics_stack"],
+                    self.sensorless_data["measurement_offsets"],
+                    self.sensorless_params["NA"],
+                    self.sensorless_params["wavelength"],
                 )
 
             # Set the sensorless AO correction and enable it
-            ao_correction = self.sensorless_data["sensorless_correct_coef"] * -1.0
-            self.set_correction("sensorless", modes=ao_correction)
-            self.toggle_correction("sensorless", True)
+            self.set_correction(
+                "sensorless", self.sensorless_data["corrections"]
+            )
             self.refresh_corrections()
 
-        # Add current correction to stack
-        ao_correction = self.sensorless_data["sensorless_correct_coef"] * -1.0
-        self.sensorless_data["correction_stack"].append(np.ndarray.tolist(ao_correction))
-
-        # Update/create metric plot
-        sensorless_data = {
-            'image_stack': self.sensorless_data["image_stack"],
-            'metric_stack': self.sensorless_data["metric_stack"],
-            'correction_stack': self.sensorless_data["correction_stack"],
-            'nollZernike': self.sensorless_params["nollZernike"],
-            'z_steps': self.sensorless_data["z_steps"],
-            'iterations': self.sensorless_params["num_it"] 
-        }
-
-        # Publish data
-        events.publish(PUBSUB_SENSORLESS_RESULTS, sensorless_data)
-
+            # Signal end of sensorless AO routine
+            events.publish(PUBSUB_SENSORLESS_FINISH)
 
         # Take image, but ensure it's called after the phase is applied
         time.sleep(0.1)
         wx.CallAfter(wx.GetApp().Imager.takeImage)
+
+    def _log_correction_applied(
+        self,
+        image_stack,
+        modes_subset,
+        corrections,
+        metrics_stack,
+        measurement_offsets,
+        NA,
+        wavelength,
+    ):
+        # Derive file path
+        ao_log_filepath = os.path.join(
+            wx.GetApp().Config["log"].getpath("dir"),
+            "sensorless_AO_" + time.strftime("%Y%m%d_%H%M", time.gmtime()) + ".h5",
+        )
+
+        # Write data to file
+        with h5py.File(ao_log_filepath, "w") as f:
+            # Assemble data to write
+            data = [
+                ("timestamp", time.strftime("%Y%m%d_%H%M", time.gmtime())),
+                ("image_stack", image_stack),
+                ("modes_subset", modes_subset),
+                ("corrections", corrections),
+                ("metrics_stack", metrics_stack),
+                ("measurement_offsets", measurement_offsets),
+                ("NA", NA),
+                ("wavelength", wavelength),
+            ]
+
+            # Write assembled data
+            for datum in data:
+                try:
+                    f.create_dataset(datum[0], data=datum[1])
+                except Exception as e:
+                    print("Failed to write: {}".format(datum[0]), e)
 
     def getCamera(self):
         cameras = depot.getActiveCameras()

@@ -1,156 +1,158 @@
-from cockpit import events
-
+import numpy
 import wx
-import wx.grid
-import wx.lib.newevent
+import matplotlib.ticker
+import matplotlib.figure
+import matplotlib.backends.backend_wxagg
+import matplotlib.backends.backend_wx
 
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
-
-import numpy as np
-
-from microAO.events import *
+import cockpit
+import microAO.events
 
 
 class SensorlessResultsViewer(wx.Frame):
-    def __init__(self, parent, data, **kwargs):
+    _NUMBER_OF_DENSE_POINTS = 100
+    _MODE_SPACING_FRACTION = 0.1
+
+    def __init__(self, parent, data):
         super().__init__(parent, title="Metric viewer")
+
         root_panel = wx.Panel(self)
 
-        self.data = data
-        
-        if self.data is not None:
-            self.update()
+        # Instance attributes
+        self._index = 0
+        self._x_tick_positions = []
+        self._x_tick_labels = []
 
-        tabs = wx.Notebook(root_panel, size=(-1,-1))
+        # Add figure and canvas
+        self._figure = matplotlib.figure.Figure(constrained_layout=True)
+        self._axes = None
+        self._canvas = matplotlib.backends.backend_wxagg.FigureCanvasWxAgg(
+            root_panel, wx.ID_ANY, self._figure
+        )
 
-        metric_panel = wx.Panel(tabs)
-        figure = Figure()
-        self.ax = figure.add_subplot(1, 1, 1)
-        self.canvas = FigureCanvas(metric_panel, wx.ID_ANY, figure)
+        # Add a toolbar
+        toolbar = matplotlib.backends.backend_wx.NavigationToolbar2Wx(
+            self._canvas
+        )
+        toolbar.Show()
 
-        metric_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        metric_panel_sizer.Add(self.canvas, wx.SizerFlags(1).Expand())
-        metric_panel.SetSizer(metric_panel_sizer)
-
-        # Correction panel
-        corrections_panel = wx.Panel(tabs)    
-        self.corrections_grid = wx.grid.Grid(corrections_panel, -1)
-        self.corrections_grid.CreateGrid(1, 1)
-
-        correction_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        correction_panel_sizer.Add(self.corrections_grid, wx.SizerFlags(1).Expand())
-        corrections_panel.SetSizer(correction_panel_sizer)
-
-        tabs.AddPage(metric_panel, "Metric plot")
-        tabs.AddPage(corrections_panel, "Corrections")
-        tabs.Layout()
-
+        # Sizing
         root_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        root_panel_sizer.Add(tabs)
+        root_panel_sizer.Add(self._canvas, 1, wx.EXPAND)
+        root_panel_sizer.Add(toolbar, 0, wx.EXPAND)
         root_panel.SetSizerAndFit(root_panel_sizer)
-
         frame_sizer = wx.BoxSizer(wx.VERTICAL)
-        frame_sizer.Add(root_panel, wx.SizerFlags().Expand())
+        frame_sizer.Add(root_panel, 1, wx.EXPAND)
         self.SetSizerAndFit(frame_sizer)
 
         # Subscribe to pubsub events
-        events.subscribe(PUBSUB_SENSORLESS_RESULTS, self.HandleSensorlessData)
+        cockpit.events.subscribe(
+            microAO.events.PUBSUB_SENSORLESS_START, self._on_start
+        )
+        cockpit.events.subscribe(
+            microAO.events.PUBSUB_SENSORLESS_RESULTS, self._on_results
+        )
 
         # Bind to close event
-        self.Bind(wx.EVT_CLOSE, self.OnClose)
-        
+        self.Bind(wx.EVT_CLOSE, self._on_close)
 
-    def update(self):
-        # Calclate required data
-        n_images = len(self.data['metric_stack'])
-        n_z_steps = len(self.data['z_steps'])
-        nollZernike = self.data['nollZernike']
-        iterations = self.data['iterations']
-        n_modes = len(nollZernike)
+        # Initialise data
+        if data is not None:
+            self._update(data)
 
-        if n_images < 1:
-            return
+    def _update(self, data):
+        # Calculate a more dense fit
+        mode_values_dense = None
+        metrics_dense = None
+        if len(data["optimal_parameters"]) > 0:
+            mode_values_dense = numpy.linspace(
+                min(data["mode_values"]),
+                max(data["mode_values"]),
+                self._NUMBER_OF_DENSE_POINTS,
+            )
+            metrics_dense = data["fitted_function"](
+                mode_values_dense, *data["optimal_parameters"]
+            )
 
-        # Compute mode boundaries and labels
-        mode_boundaries = np.arange(0, n_images, n_z_steps)
-        vlines = list(mode_boundaries[1:] - 0.5)
-        xticks = mode_boundaries + (n_z_steps - 1) / 2 
-        xticklabels = ['z-{}'.format(z) for z in nollZernike] * iterations
-        xticklabels = xticklabels[0:len(xticks)]
+        # Calculate the position of the corrected amplitude
+        correction_metric = None
+        if len(data["optimal_parameters"]) > 0:
+            correction_metric = data["fitted_function"](
+                data["correction_amplitude"], *data["optimal_parameters"]
+            )
+        else:
+            correction_metric = numpy.mean(data["metrics"])
 
-        # Set up x,y data
-        x = np.arange(0,n_images)
-        y = self.data['metric_stack']
+        # Calculate parameters
+        margin = data["measurement_range"] * self._MODE_SPACING_FRACTION
+        x_start = (
+            self._index * data["measurement_range"] + self._index * margin
+        )
+        x_range = (x_start, x_start + data["measurement_range"])
 
-        # Plot metric data
-        self.ax.clear()
-        self.ax.plot(x,y, '-x')
+        # Plot
+        self._axes.plot(
+            numpy.linspace(*x_range, len(data["mode_values"])),
+            data["metrics"],
+            marker="o",
+            color="blue",
+        )
+        if mode_values_dense is not None:
+            self._axes.plot(
+                numpy.linspace(*x_range, len(mode_values_dense)),
+                metrics_dense,
+                color="orange",
+            )
+        self._axes.plot(
+            numpy.interp(
+                data["correction_amplitude"],
+                (min(data["mode_values"]), max(data["mode_values"])),
+                x_range,
+            ),
+            correction_metric,
+            "rx",
+        )
 
-        # Plot mode boundaries, ticks and labels
-        for x_pos in vlines:
-            self.ax.axvline(x_pos, color='gray')
-
-        self.ax.xaxis.set_ticks(xticks)        
-        self.ax.xaxis.set_ticklabels(xticklabels)
-
-        # Display computed corrections
-        correction_stack = self.data["correction_stack"]
-        n_corrections = len(correction_stack)
-
-        rows = self.corrections_grid.GetNumberRows()
-        cols = self.corrections_grid.GetNumberCols()
-        
-        # Calculate length of one AO iteration
-        len_iteration = n_modes * n_z_steps
-
-        # Populate values if AO iteration is complete
-        if n_corrections % len_iteration == 0:
-            # Get current correction from stack
-            curr_correction = self.data["correction_stack"][-1]
-
-            # Calculate number of complete AO iterations completed
-            complete_iterations = n_corrections // len_iteration
-            
-            # Set column label
-            self.corrections_grid.SetColLabelValue(complete_iterations - 1, "Iteration{}".format(complete_iterations))
-            
-            # Add rows/columns as required
-            if (complete_iterations - cols) > 0:
-                self.corrections_grid.AppendCols(complete_iterations - cols)
-            if (n_modes - rows) > 0:
-                self.corrections_grid.AppendRows(n_modes - rows)
-
-            # Set row labels
-            for i, z in enumerate(nollZernike):
-                self.corrections_grid.SetRowLabelValue(i, "z{}".format(z))
-
-            # Populate values
-            values = ["{:.2f}".format(curr_correction[ind - 1]) for ind in nollZernike]
-            for i, value in enumerate(values):
-                self.corrections_grid.SetCellValue(i, complete_iterations - 1, value)
+        # Configure ticks
+        tick_position = data["measurement_range"] / 2 + x_start
+        self._x_tick_positions += [tick_position]
+        self._x_tick_labels += [data["mode_label"]]
+        self._axes.xaxis.set_major_locator(
+            matplotlib.ticker.FixedLocator(self._x_tick_positions)
+        )
+        self._axes.xaxis.set_major_formatter(
+            matplotlib.ticker.FixedFormatter(self._x_tick_labels)
+        )
 
         # Set x-axis limits
-        self.ax.set_xlim(min(x)-0.5, max(x)+0.5)
+        self._axes.set_xlim(left=0, right=x_range[1])
 
-        # Set labels
-        self.ax.set_xlabel('Mode')
-        self.ax.set_ylabel('Metric value')
-        self.ax.set_title('Metric vs iteration (grouped by mode)')
+        # Increment plotting index
+        self._index += 1
 
         # Refresh canvas
-        self.canvas.draw()
+        self._canvas.draw()
 
-    def set_data(self, data):
-        self.data = data
-        self.update()
-    
-    def HandleSensorlessData(self, data):
-        self.set_data(data)
-    
-    def OnClose(self, evt):
-        # Unsubscribe from pubsub events
-        events.unsubscribe(PUBSUB_SENSORLESS_RESULTS, self.HandleSensorlessData)
+    def _on_start(self):
+        self._figure.clear()
+        self._index = 0
+        self._x_tick_positions = []
+        self._x_tick_labels = []
+        self._axes = self._figure.add_subplot()
+        self._axes.set_xlabel("Mode")
+        self._axes.set_ylabel("Metric")
+
+    def _on_results(self, data):
+        self._update(data)
+
+    def _on_close(self, evt):
+        # Unsubscribe from events
+        cockpit.events.unsubscribe(
+            microAO.events.PUBSUB_SENSORLESS_START, self._on_start
+        )
+        cockpit.events.unsubscribe(
+            microAO.events.PUBSUB_SENSORLESS_RESULTS, self._on_results
+        )
 
         # Continue + destroy frame
         evt.Skip()

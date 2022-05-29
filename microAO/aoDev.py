@@ -1026,33 +1026,3 @@ class AdaptiveOpticsDevice(Device):
     def measure_metric(self, image, **kwargs):
         metric = aoAlg.measure_metric(image, **kwargs)
         return metric
-
-    @Pyro4.expose
-    def correct_sensorless_single_mode(
-        self,
-        image_stack,
-        zernike_applied,
-        nollIndex,
-        wavelength,
-        NA,
-        pixel_size
-    ):
-        numActuators, _ = np.shape(self.get_controlMatrix())
-        z_amps = np.zeros(numActuators)
-        amp_to_correct, metrics = aoAlg.find_zernike_amp_sensorless(
-            image_stack,
-            zernike_applied,
-            wavelength=wavelength,
-            NA=NA,
-            pixel_size=pixel_size,
-        )
-        if abs(amp_to_correct) <= 1.5 * (
-            np.max(zernike_applied) - np.min(zernike_applied)
-        ):
-            _logger.info("Amplitude calculated = %f" % amp_to_correct)
-        else:
-            _logger.info("Amplitude calculated = %f" % amp_to_correct)
-            _logger.info("Amplitude magnitude too large. Defaulting to 0.")
-            amp_to_correct = 0
-        z_amps[nollIndex - 1] = -1.0 * amp_to_correct
-        return amp_to_correct, metrics

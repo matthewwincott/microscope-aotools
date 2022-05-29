@@ -128,7 +128,7 @@ class RemoteZ():
         self._n_actuators = control_matrix.shape[0]
         self._n_modes = control_matrix.shape[1]
 
-    def calibrate_z_pos(self, zstage, zpos, output_dir=None, defocus_modes=[4,11], other_modes=np.asarray([22, 5, 6, 7, 8, 9, 10])):
+    def calibrate_z_pos(self, zstage, zpos, defocus_modes=[3,10], other_modes=[21, 4, 5, 6, 7, 8, 9]):
         if self._n_actuators == 0:
             raise Exception(
                 "Remote focusing calibration failed because the adaptive "
@@ -137,9 +137,7 @@ class RemoteZ():
 
         mover = depot.getHandlerWithName("{}".format(zstage.name))
 
-        zero_position = self._device.proxy.get_last_actuator_values()
-
-        for i, z in enumerate(zpos):
+        for z in zpos:
             # Calculate motion time and move
             z_prev = zstage.getPosition()
             motion_time, stabilise_time = mover.getMovementTime(z_prev,z)
@@ -153,12 +151,10 @@ class RemoteZ():
             )
 
             # Correct defocus
-            modes = np.array(defocus_modes)
-            action = self.sensorless_correct(modes)
+            self.sensorless_correct(defocus_modes)
 
             # Correct other aberrations
-            modes = np.array(other_modes)
-            self.sensorless_correct(modes)
+            self.sensorless_correct(other_modes)
 
             # Save datapoint
             values = self._device.proxy.get_last_actuator_values()
@@ -421,12 +417,12 @@ class RemoteZ():
         # Ask the GUI thread to update the status light
         events.publish(PUBSUB_RF_CALIB_CACT_PROJ)
 
-    def sensorless_correct(self, modes, start_values = None):
+    def sensorless_correct(self, modes):
         # Get current sensorless params
-        params_prev = self._device.sensorless_params.copy()
+        params_prev = copy.deepcopy(self._device.sensorless_params.copy)
 
         try:
-            self._device.sensorless_params["nollZernike"] = modes
+            self._device.sensorless_params["modes_subset"] = modes
 
 
             camera = self._device.getCamera()
@@ -441,20 +437,19 @@ class RemoteZ():
             logger.log.debug("Start sensorless")
             # Start sensorless AO
             events.executeAndWaitForOrTimeout(
-                PUBSUB_SENSORLESS_COMPLETE,
+                PUBSUB_SENSORLESS_FINISH,
                 action,
-                5
+                60
             )
-            # action(camera)
             logger.log.debug("Done sensorless")
             window.Close()
 
         except Exception as e:
             print('error', e)
-        
+
         finally:
             # Return sensorless params to previous
-            self._device.sensorless_parms = params_prev
+            self._device.sensorless_params = params_prev
 
     def zstack(self, zmin, zmax, zstepsize, camera=None, imager=None):
         zpositions = np.linspace(

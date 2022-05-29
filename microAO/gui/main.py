@@ -968,9 +968,6 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         if camera is None:
             return
 
-        # Start sensorless AO
-        action(camera)
-
         # Create results viewer
         try:
             window = self.FindWindowById(self._components["sensorless_results"])
@@ -982,6 +979,9 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             self._components["sensorless_results"] = window.GetId()
 
             window.Show()
+
+        # Start sensorless AO
+        action(camera)
 
     def OnManualAberration(self, event: wx.CommandEvent) -> None:
         # Try to find modes window
@@ -1238,23 +1238,29 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                 "Aberration range maxima",
                 "Number of measurements",
                 "Number of repeats",
-                "Noll indices"
+                "Noll indices",
+                "NA",
+                "wavelength"
             ],
             (
-                params["z_min"],
-                params["z_max"],
-                params["numMes"],
-                params["num_it"],
-                params["nollZernike"].tolist()
+                params["range_min"],
+                params["range_max"],
+                params["num_meas"],
+                params["num_reps"],
+                [mode_index + 1 for mode_index in params["modes_subset"]],
+                params["NA"],
+                params["wavelength"],
             ),
         )
-        params["z_min"] = float(inputs[0])
-        params["z_max"] = float(inputs[1])
-        params["numMes"] = int(inputs[2])
-        params["num_it"] = int(inputs[3])
-        params["nollZernike"] = np.asarray(
-            [int(z_ind) for z_ind in inputs[4][1:-1].split(", ")]
-        )
+        params["range_min"] = float(inputs[0])
+        params["range_max"] = float(inputs[1])
+        params["num_meas"] = int(inputs[2])
+        params["num_reps"] = int(inputs[3])
+        params["modes_subset"] = [
+            int(z_ind) - 1 for z_ind in inputs[4][1:-1].split(", ")
+        ]
+        params["NA"] = float(inputs[5])
+        params["wavelength"] = int(inputs[6])
 
     def OnDMViewer(self, event: wx.CommandEvent) -> None:
         # Try to find DM viewer window
