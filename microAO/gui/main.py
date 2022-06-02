@@ -396,6 +396,9 @@ class _PhaseViewer(wx.Frame):
         self._canvas.draw()
 
 class _CharacterisationAssayViewer(wx.Frame):
+
+    _ASSAY_COLORMAP = "seismic"
+
     def __init__(self, parent, characterisation_assay):
         super().__init__(parent, title="Characterisation Asssay")
 
@@ -403,22 +406,35 @@ class _CharacterisationAssayViewer(wx.Frame):
 
         root_panel = wx.Panel(self)
 
-        figure = Figure()
+        figure = Figure(constrained_layout=True)
 
+        assay_max = np.max(np.abs(characterisation_assay))
         img_ax = figure.add_subplot(1, 2, 1)
-        img_ax.imshow(characterisation_assay)
+        axes_image = img_ax.matshow(
+            characterisation_assay,
+            cmap=self._ASSAY_COLORMAP,
+            vmin=-assay_max,
+            vmax=assay_max
+        )
+        figure.colorbar(axes_image)
+        img_ax.set(xticks=[], yticks=[])
 
         diag_ax = figure.add_subplot(1, 2, 2)
         assay_diag = np.diag(characterisation_assay)
-        diag_ax.plot(assay_diag)
+        diag_ax.axhline(color="k")
+        diag_ax.plot(assay_diag, "C0.")
+        diag_ax.axhspan(-0.25, 0.25, color="C0", alpha=0.1)
+        diag_ax.set_ylim(-assay_max, assay_max)
+        diag_ax.set_xlabel("Mode")
+        diag_ax.set_ylabel("Error")
 
         canvas = FigureCanvas(root_panel, wx.ID_ANY, figure)
 
         info_txt = wx.StaticText(
             root_panel,
             label=(
-                "Mean Zernike reconstruction accuracy: %0.5f"
-                % np.mean(assay_diag)
+                "Diagonal mean = %.5f and RMS = %.5f"
+                % (np.mean(assay_diag), np.sqrt(np.mean(assay_diag ** 2)))
             ),
         )
 
@@ -434,7 +450,7 @@ class _CharacterisationAssayViewer(wx.Frame):
         root_panel.SetSizer(panel_sizer)
 
         frame_sizer = wx.BoxSizer(wx.VERTICAL)
-        frame_sizer.Add(root_panel, wx.SizerFlags().Expand())
+        frame_sizer.Add(root_panel, wx.SizerFlags(1).Expand())
         self.SetSizerAndFit(frame_sizer)
 
     def _OnButtonSave(self, event: wx.CommandEvent) -> None:

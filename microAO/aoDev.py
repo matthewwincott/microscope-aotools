@@ -1001,7 +1001,7 @@ class AdaptiveOpticsDevice(Device):
 
     @Pyro4.expose
     @_with_wavefront_camera_ttype_software
-    def assess_character(self, modes_tba=None):
+    def assess_character(self, modes_tba=None, step=1.0):
         # Ensure the conditions for phase unwrapping are in satisfied
         self.check_unwrap_conditions()
 
@@ -1009,15 +1009,18 @@ class AdaptiveOpticsDevice(Device):
             modes_tba = self.get_controlMatrix().shape[1]
         assay = np.zeros((modes_tba, modes_tba))
         applied_z_modes = np.zeros(modes_tba)
+        self.set_phase(np.zeros(modes_tba))
+        z_modes_ac0 = self.measure_zernike(modes_tba)
         for ii in range(modes_tba):
-            self.set_phase(np.zeros(modes_tba))
-            z_modes_ac0 = self.measure_zernike(modes_tba)
-            applied_z_modes[ii] = 1
+            applied_z_modes[ii] = step
             self.set_phase(applied_z_modes)
             _logger.info("Appling Zernike mode %i/%i" % (ii + 1, modes_tba))
             acquired_z_modes = self.measure_zernike(modes_tba)
             _logger.info("Measured phase")
+            # Calculate the error terms of the assay. The step is zero for all
+            # modes besides the one currently being probed.
             assay[:, ii] = acquired_z_modes - z_modes_ac0
+            assay[ii, ii] -= step
             applied_z_modes[ii] = 0.0
         self.set_phase(np.zeros(modes_tba))
         return assay

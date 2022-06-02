@@ -484,17 +484,9 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         assay = self.proxy.assess_character()
 
-        if np.mean(assay[1:, 1:]) < 0:
-            controlMatrix = self.proxy.get_controlMatrix()
-            self.update_control_matrix(-1 * controlMatrix)
-            assay = assay * -1
-            userConfig.setValue(
-                "dm_controlMatrix", np.ndarray.tolist(controlMatrix)
-            )
-
         # The default system corrections should be for the zernike
         # modes we can accurately recreate.
-        self.sys_flat_parameters["sysFlatNollZernike"] = ((np.diag(assay) > 0.75).nonzero()[0]) + 1
+        self.sys_flat_parameters["sysFlatNollZernike"] = ((np.abs(np.diag(assay)) < 0.25).nonzero()[0]) + 1
 
         # Restore original corrections
         for key, value in original_corrections.items():
