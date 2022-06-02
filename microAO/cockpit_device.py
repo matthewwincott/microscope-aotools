@@ -510,6 +510,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         # Ensure all corrections are disabled
         original_corrections = self.get_corrections()
+        self.reset()
 
         control_matrix = self.proxy.get_controlMatrix()
         n_actuators = control_matrix.shape[0]
