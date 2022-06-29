@@ -38,6 +38,8 @@ import matplotlib.patches
 import matplotlib.lines
 import matplotlib.patheffects
 
+import skimage.exposure
+
 import numpy as np
 import imageio
 
@@ -265,7 +267,8 @@ class _BeadPicker(wx.Dialog):
         fig = Figure()
         axes = fig.add_subplot()
         self._axes_image = axes.imshow(
-            self._imgs[self._imgs_idx], cmap=self._DEFAULT_CMAP
+            self._rescale_image(self._imgs[self._imgs_idx]),
+            cmap=self._DEFAULT_CMAP
         )
         rect_edge = self._axes_image.get_cmap().get_over()
         rect_edge[3] = 0.3
@@ -349,8 +352,14 @@ class _BeadPicker(wx.Dialog):
         self._selecting = False
 
     def _on_slider(self, event: wx.CommandEvent):
-        self._axes_image.set_data(self._imgs[event.GetInt() - 1])
+        self._axes_image.set_data(
+            self._rescale_image(self._imgs[event.GetInt() - 1])
+        )
         self._canvas.draw()
+
+    def _rescale_image(self, image):
+        p2, p98 = np.percentile(image, (2, 98))
+        return skimage.exposure.rescale_intensity(image, in_range=(p2, p98))
 
     def get_roi(self):
         roi = (
