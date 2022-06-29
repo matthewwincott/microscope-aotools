@@ -46,7 +46,7 @@ def _orthogonal_projection(image, point = None, xy2z_ratio=1.0):
     # Determine projection point
     if point is None:
         point = [dim // 2 for dim in image.shape]
-    # Project and return
+    # Project
     for zi in range(image.shape[0]):
         projection_zx[zi] = image[zi, point[1], :]
         projection_zy[zi] = image[zi, :, point[2]]
@@ -243,8 +243,9 @@ class RemoteZ():
         for rf_stack in rf_stacks:
             tifffile.imwrite(
                 output_dir_path.joinpath(
-                    f"remote-focus-zstack_z{rf_stack.stage_position_rel:.03f}"
-                    "um.ome.tif"
+                    "remote-focus-zstack_"
+                    f"zr={rf_stack.stage_position_rel:+.05f}um_"
+                    f"za={rf_stack.stage_position_abs:+.05f}um.ome.tif"
                 ),
                 rf_stack.images,
                 metadata = {
@@ -283,18 +284,45 @@ class RemoteZ():
         # Process stacks
         projection_data = [[], []]  # list of lists; [[zx0, zx1, ...], [zy0, zy1, ...]]
         for rf_stack in rf_stacks:
-            # Crop bead
+            # Crop bead and save it
             bead = rf_stack.images[
                 :,
                 bead_roi[1] : bead_roi[1] + bead_roi[3],
                 bead_roi[0] : bead_roi[0] + bead_roi[2]
             ]
-            # Derive orthogonal views
+            tifffile.imwrite(
+                output_dir_path.joinpath(
+                    f"bead_zr={rf_stack.stage_position_rel:+.05f}um_"
+                    f"za={rf_stack.stage_position_abs:+.05f}um.ome.tif"
+                ),
+                bead,
+                metadata = {
+                    "axes": "ZYX",
+                    "PhysicalSizeX": xy_pixelsize,  # um
+                    "PhysicalSizeY": xy_pixelsize,  # um
+                    "PhysicalSizeZ": defocus_step,  # um
+                }
+            )
+            # Derive orthogonal views and save them
             projections = _orthogonal_projection(
                 bead,
                 _find_bead_centre(bead),
                 xy_pixelsize / defocus_step
             )[1:]
+            for projection_index, projection_type in enumerate(("zx", "zy")):
+                tifffile.imwrite(
+                    output_dir_path.joinpath(
+                        f"proj-{projection_type}_"
+                        f"zr={rf_stack.stage_position_rel:+.05f}um_"
+                        f"za={rf_stack.stage_position_abs:+.05f}um.ome.tif"
+                    ),
+                    projections[projection_index],
+                    metadata = {
+                        "PhysicalSizeX": xy_pixelsize,  # um
+                        "PhysicalSizeY": xy_pixelsize,  # um
+                    }
+                )
+            # ----------------------------------------------------------------
             # Calculate the necessary padding (identical for both zx and zy)
             offset_top_um = (
                 z_max_um -
@@ -339,10 +367,10 @@ class RemoteZ():
                     )
                     position_corrected = None
                     centroid_padded = None
-                    projection_padded_labelled = None
+                    projection_padded_labelled = skimage.color.gray2rgb(projection_padded)
                 else:
                     # Calculate error term
-                    image_offset_um = ((projections.shape[0] / 2) - centroid[0]) * xy_pixelsize
+                    image_offset_um = ((projection.shape[0] / 2) - centroid[0]) * xy_pixelsize
                     error = rf_stack.stage_position_rel - image_offset_um
                     position_corrected = rf_stack.stage_position_rel + error
                     # Calculate padded centroid
@@ -369,31 +397,6 @@ class RemoteZ():
                         centroid_padded
                     )
                 )
-        # Fit a line to the corrected Z offsets and save the coefficients
-        polynomials = []
-        for index in range(len(projection_data)):
-            polynomials.append(
-                np.polynomial.polynomial.Polynomial.fit(
-                    [
-                        datum.stage_position_rel_corrected
-                        for datum in projection_data[index]
-                        if datum.stage_position_rel_corrected
-                    ],
-                    [
-                        datum.stage_position_rel
-                        for datum in projection_data[index]
-                        if datum.stage_position_rel_corrected
-                    ],
-                    1
-                )
-            )
-        self._compensation_poly = sum(polynomials) / 2
-        np.savetxt(
-            output_dir_path.joinpath(
-                f"remote-focus_compensation-polynomial-coefficients.txt",
-            ),
-            self._compensation_poly.convert().coef
-        )
         # Concatenate projections and save them
         for index, proj_type in enumerate(("zx", "zy")):
             for suffix in ("", "_labelled"):
@@ -414,6 +417,31 @@ class RemoteZ():
                         "PhysicalSizeY": xy_pixelsize,  # um
                     }
                 )
+        # Fit a line to the corrected Z offsets and save the coefficients
+        polynomials = []
+        for index in range(len(projection_data)):
+            x_data = [
+                datum.stage_position_rel_corrected
+                for datum in projection_data[index]
+                if datum.stage_position_rel_corrected
+            ]
+            y_data = [
+                datum.stage_position_rel
+                for datum in projection_data[index]
+                if datum.stage_position_rel_corrected
+            ]
+            if len(x_data) > 0:
+                polynomials.append(
+                    np.polynomial.polynomial.Polynomial.fit(x_data, y_data, 1)
+                )
+        if len(polynomials) > 0:
+            self._compensation_poly = np.mean(polynomials)
+            np.savetxt(
+                output_dir_path.joinpath(
+                    f"remote-focus_compensation-polynomial-coefficients.txt",
+                ),
+                self._compensation_poly.convert().coef
+            )
         # Ask the GUI thread to update the status light
         events.publish(PUBSUB_RF_CALIB_CACT_PROJ)
 
