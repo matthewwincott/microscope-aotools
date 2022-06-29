@@ -1187,8 +1187,15 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         # Get actuator values and save to file
         try:
-            values = self._device.proxy.get_last_modes()
-            np.savetxt(fpath, values)
+            corrections = self._device.get_corrections()
+            modes = np.zeros(self._device.no_actuators) + sum(
+                [
+                    np.array(correction["modes"])
+                    for correction in corrections.values()
+                    if correction["enabled"] and correction["modes"] is not None
+                ]
+            )
+            np.savetxt(fpath, modes)
             logger.log.info("Saved modes to file {}".format(fpath))
         except:
             logger.log.error("Failed to save modes")
