@@ -19,6 +19,7 @@ from wx.lib.floatcanvas.FloatCanvas import FloatCanvas
 import wx.lib.floatcanvas.FCObjects as FCObjects
 
 import matplotlib.pyplot
+import matplotlib.ticker
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 
@@ -418,15 +419,20 @@ class _CharacterisationAssayViewer(wx.Frame):
         )
         figure.colorbar(axes_image)
         img_ax.set(xticks=[], yticks=[])
+        img_ax.set_xlabel("Modes assessed")
+        img_ax.set_ylabel("Modes measured")
 
         diag_ax = figure.add_subplot(1, 2, 2)
         assay_diag = np.diag(characterisation_assay)
-        diag_ax.axhline(color="k")
-        diag_ax.plot(assay_diag, "C0.")
-        diag_ax.axhspan(-0.25, 0.25, color="C0", alpha=0.1)
+        diag_ax.axhline()
+        diag_ax.plot(np.arange(assay_diag.shape[0]) + 2, assay_diag, "C0.")
+        diag_ax.axhspan(-0.25, 0.25, color="C0", alpha=0.2)
         diag_ax.set_ylim(-assay_max, assay_max)
         diag_ax.set_xlabel("Mode")
         diag_ax.set_ylabel("Error")
+        diag_ax.xaxis.set_minor_locator(matplotlib.ticker.MultipleLocator(1))
+        diag_ax.grid(which="major", axis="x", color="#666666")
+        diag_ax.grid(which="minor", axis="x", color="#444444", linestyle=":")
 
         canvas = FigureCanvas(root_panel, wx.ID_ANY, figure)
 
