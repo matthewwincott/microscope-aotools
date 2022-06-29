@@ -374,6 +374,11 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             self._calibration_data["running"] = False
             self._abort["calib_data"] = False
             self._calibration_data["image_queue"].join()
+            self.send(
+                np.zeros_like(
+                    self._calibration_data["actuator_patterns"][0]
+                ) + 0.5
+            )
 
     def unwrap_phase(self, image):
         # Crop the image if necessary
