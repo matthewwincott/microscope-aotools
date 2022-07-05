@@ -337,37 +337,48 @@ class AdaptiveOpticsFunctions():
         metric = metric_function[self.metric](image, **kwargs)
         return metric
 
-    def find_zernike_amp_sensorless(self, image_stack, zernike_amplitudes, **kwargs):
+    def find_zernike_amp_sensorless(self, image_stack, modes, **kwargs):
         # Calculate metrics
-        metrics_measured = []
+        metrics = []
         for image in image_stack:
-            metrics_measured.append(
+            metrics.append(
                 metric_function[self.metric](image, **kwargs)
             )
-        metrics_measured = np.asarray(metrics_measured)
-        # Calculate boundaries as min/max values +/- quarter of the range
-        z_l_bound = np.min(zernike_amplitudes) - (0.25 * (np.max(zernike_amplitudes) - np.min(zernike_amplitudes)))
-        z_u_bound = np.max(zernike_amplitudes) + (0.25 * (np.max(zernike_amplitudes) - np.min(zernike_amplitudes)))
-        # Fit
-        try:
-            popt, _ = curve_fit(
-                gaussian_function,
-                zernike_amplitudes,
-                metrics_measured,
-                bounds=(
-                    [np.NINF, 0, z_l_bound, np.NINF],
-                    [np.Inf, np.Inf, z_u_bound, np.Inf]
-                )
+        metrics = np.array(metrics)
+        # Trivial case
+        if metrics.shape[0] == 1:
+            return np.array((modes[0], metrics[0])), metrics
+        # Fit a parabola to the highest metric point and its neighbours
+        if metrics.shape[0] == 2:
+            indices_to_fit = [0, 1]
+        else:
+            max_metric_index = np.argmax(metrics)
+            indices_to_fit = np.array([
+                max_metric_index - 1,
+                max_metric_index,
+                max_metric_index + 1
+            ])
+            # Handle edge cases
+            if max_metric_index == 0:
+                 # Peak is at the left boundary => select two neighbours to the right
+                indices_to_fit += 1
+            elif max_metric_index == metrics.shape[0] - 1:
+                # Peak is at the right boundary => select two neighbours to the left
+             indices_to_fit -= 1
+        parabola = np.polynomial.Polynomial.fit(
+            modes[indices_to_fit],
+            metrics[indices_to_fit],
+            2
+        )
+        # Find the maxima of the parabola
+        parabola_maxima = parabola.deriv().roots()[0]
+        # Consider both the parabola maxima and the parabola boundary points
+        peak_candidates = np.array(
+            (
+                (modes[indices_to_fit[0]], metrics[indices_to_fit[0]]),
+                (parabola_maxima, parabola(parabola_maxima)),
+                (modes[indices_to_fit[-1]], metrics[indices_to_fit[-1]])
             )
-            mean = popt[2]
-        except RuntimeError:
-            max_from_mean_var = (np.max(metrics_measured) - np.mean(metrics_measured))
-            if max_from_mean_var >= 2*np.sqrt(np.var(metrics_measured)):
-                # Could not accurately fit metric polynomial => using maximum metric amplitude
-                mean = zernike_amplitudes[metrics_measured == np.max(metrics_measured)]
-            else:
-                # Could not accurately fit metric polynomial => Defaulting to the middle of the range
-                mean = np.mean(zernike_amplitudes)
-            popt = []
-
-        return mean, metrics_measured, popt, gaussian_function
+        )
+        peak_index = np.argmax(peak_candidates[:, 1])
+        return peak_candidates[peak_index], metrics

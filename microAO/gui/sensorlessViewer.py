@@ -1,3 +1,5 @@
+import dataclasses
+import json
 import numpy
 import wx
 import matplotlib.ticker
@@ -9,16 +11,24 @@ import cockpit
 import microAO.events
 
 
+@dataclasses.dataclass(frozen=True)
+class SensorlessResultsData:
+    metrics: numpy.ndarray
+    modes: numpy.ndarray
+    mode_label: str
+    peak: numpy.ndarray
+
 class SensorlessResultsViewer(wx.Frame):
     _NUMBER_OF_DENSE_POINTS = 100
     _MODE_SPACING_FRACTION = 0.1
 
-    def __init__(self, parent, data):
+    def __init__(self, parent):
         super().__init__(parent, title="Metric viewer")
 
         root_panel = wx.Panel(self)
 
         # Instance attributes
+        self._data = []
         self._index = 0
         self._x_tick_positions = []
         self._x_tick_labels = []
@@ -36,10 +46,15 @@ class SensorlessResultsViewer(wx.Frame):
         )
         toolbar.Show()
 
+        # Add a button for saving of data
+        save_data_button = wx.Button(root_panel, label="Save data")
+        save_data_button.Bind(wx.EVT_BUTTON, self._on_save_data)
+
         # Sizing
         root_panel_sizer = wx.BoxSizer(wx.VERTICAL)
         root_panel_sizer.Add(self._canvas, 1, wx.EXPAND)
         root_panel_sizer.Add(toolbar, 0, wx.EXPAND)
+        root_panel_sizer.Add(save_data_button, 0, wx.ALL, 5)
         root_panel.SetSizerAndFit(root_panel_sizer)
         frame_sizer = wx.BoxSizer(wx.VERTICAL)
         frame_sizer.Add(root_panel, 1, wx.EXPAND)
@@ -50,73 +65,80 @@ class SensorlessResultsViewer(wx.Frame):
             microAO.events.PUBSUB_SENSORLESS_START, self._on_start
         )
         cockpit.events.subscribe(
-            microAO.events.PUBSUB_SENSORLESS_RESULTS, self._on_results
+            microAO.events.PUBSUB_SENSORLESS_RESULTS, self._update
         )
 
         # Bind to close event
         self.Bind(wx.EVT_CLOSE, self._on_close)
 
-        # Initialise data
-        if data is not None:
-            self._update(data)
+    def _on_save_data(self, evt: wx.CommandEvent):
+        # Ask the user to select file
+        fpath = None
+        with wx.FileDialog(
+            self,
+            "Save modes",
+            wildcard="JSON file (*.json)|*.json",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as fileDialog:
+            if fileDialog.ShowModal() != wx.ID_OK:
+                return
+            fpath = fileDialog.GetPath()
+        # Convert data to dicts and save them as JSON
+        data_dicts = []
+        for data in self._data:
+            data_dict = dataclasses.asdict(data)
+            for key in data_dict:
+                if isinstance(data_dict[key], numpy.ndarray):
+                    data_dict[key] = data_dict[key].tolist()
+            data_dicts.append(data_dict)
+        with open(fpath, "w", encoding="utf-8") as fo:
+            json.dump(data_dicts, fo, sort_keys=True, indent=4)
 
-    def _update(self, data):
-        # Calculate a more dense fit
-        mode_values_dense = None
-        metrics_dense = None
-        if len(data["optimal_parameters"]) > 0:
-            mode_values_dense = numpy.linspace(
-                min(data["mode_values"]),
-                max(data["mode_values"]),
-                self._NUMBER_OF_DENSE_POINTS,
-            )
-            metrics_dense = data["fitted_function"](
-                mode_values_dense, *data["optimal_parameters"]
-            )
+    def _on_start(self):
+        self._figure.clear()
+        self._data = []
+        self._index = 0
+        self._x_tick_positions = []
+        self._x_tick_labels = []
+        self._axes = self._figure.add_subplot()
+        self._axes.set_xlabel("Mode")
+        self._axes.set_ylabel("Metric")
 
-        # Calculate the position of the corrected amplitude
-        correction_metric = None
-        if len(data["optimal_parameters"]) > 0:
-            correction_metric = data["fitted_function"](
-                data["correction_amplitude"], *data["optimal_parameters"]
-            )
-        else:
-            correction_metric = numpy.mean(data["metrics"])
-
+    def _update(self, data: SensorlessResultsData):
         # Calculate parameters
-        margin = data["measurement_range"] * self._MODE_SPACING_FRACTION
-        x_start = (
-            self._index * data["measurement_range"] + self._index * margin
-        )
-        x_range = (x_start, x_start + data["measurement_range"])
+        all_modes = numpy.append(data.modes, data.peak[0])
+        mode_range = data.modes.max() - data.modes.min()
+        x_start = self._index * mode_range * (self._MODE_SPACING_FRACTION + 1)
+        x_range = (x_start, x_start + mode_range)
+        margin_x = mode_range * 0.1
 
         # Plot
         self._axes.plot(
-            numpy.linspace(*x_range, len(data["mode_values"])),
-            data["metrics"],
-            marker="o",
-            color="blue",
-        )
-        if mode_values_dense is not None:
-            self._axes.plot(
-                numpy.linspace(*x_range, len(mode_values_dense)),
-                metrics_dense,
-                color="orange",
-            )
-        self._axes.plot(
             numpy.interp(
-                data["correction_amplitude"],
-                (min(data["mode_values"]), max(data["mode_values"])),
+                data.modes,
+                (min(all_modes), max(all_modes)),
                 x_range,
             ),
-            correction_metric,
-            "rx",
+            data.metrics,
+            marker="o",
+            color="skyblue"
+        )
+        self._axes.plot(
+            numpy.interp(
+                data.peak[0],
+                (min(all_modes), max(all_modes)),
+                x_range,
+            ),
+            data.peak[1],
+            marker="+",
+            markersize=20,
+            color="crimson"
         )
 
         # Configure ticks
-        tick_position = data["measurement_range"] / 2 + x_start
+        tick_position = mode_range / 2 + x_start
         self._x_tick_positions += [tick_position]
-        self._x_tick_labels += [data["mode_label"]]
+        self._x_tick_labels += [data.mode_label]
         self._axes.xaxis.set_major_locator(
             matplotlib.ticker.FixedLocator(self._x_tick_positions)
         )
@@ -125,7 +147,7 @@ class SensorlessResultsViewer(wx.Frame):
         )
 
         # Set x-axis limits
-        self._axes.set_xlim(left=0, right=x_range[1])
+        self._axes.set_xlim(left=-margin_x, right=x_range[1] + margin_x)
 
         # Increment plotting index
         self._index += 1
@@ -133,25 +155,16 @@ class SensorlessResultsViewer(wx.Frame):
         # Refresh canvas
         self._canvas.draw()
 
-    def _on_start(self):
-        self._figure.clear()
-        self._index = 0
-        self._x_tick_positions = []
-        self._x_tick_labels = []
-        self._axes = self._figure.add_subplot()
-        self._axes.set_xlabel("Mode")
-        self._axes.set_ylabel("Metric")
+        # Save data
+        self._data.append(data)
 
-    def _on_results(self, data):
-        self._update(data)
-
-    def _on_close(self, evt):
+    def _on_close(self, evt: wx.CloseEvent):
         # Unsubscribe from events
         cockpit.events.unsubscribe(
             microAO.events.PUBSUB_SENSORLESS_START, self._on_start
         )
         cockpit.events.unsubscribe(
-            microAO.events.PUBSUB_SENSORLESS_RESULTS, self._on_results
+            microAO.events.PUBSUB_SENSORLESS_RESULTS, self._update
         )
 
         # Continue + destroy frame

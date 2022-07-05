@@ -52,6 +52,7 @@ import microAO.dm_layouts
 
 from microAO.events import *
 from microAO.gui.main import MicroscopeAOCompositeDevicePanel
+from microAO.gui.sensorlessViewer import SensorlessResultsData
 from microAO.aoAlg import AdaptiveOpticsFunctions
 from microAO.remotez import RemoteZ
 
@@ -625,7 +626,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
     def correctSensorlessAberation(self):
         # Calculate required parameters
-        mode_values = (
+        modes = (
             self.sensorless_data["measurement_offsets"]
             + self.sensorless_data["corrections"][
                 self.sensorless_data["mode_index"]
@@ -635,39 +636,30 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             self.sensorless_data["mode_index"]
         )
         # Find aberration amplitudes and correct
-        (
-            amp_to_correct,
-            metrics_calculated,
-            optimal_parameters,
-            fitted_function,
-        ) = aoAlg.find_zernike_amp_sensorless(
+        peak, metrics = aoAlg.find_zernike_amp_sensorless(
             image_stack=self.sensorless_data["image_stack"][
                 -self.sensorless_params["num_meas"] :
             ],
-            zernike_amplitudes=mode_values,
+            modes=modes,
             wavelength=self.sensorless_params["wavelength"] * 10 ** -9,
             NA=self.sensorless_params["NA"],
             pixel_size=wx.GetApp().Objectives.GetPixelSize() * 10 ** -6,
         )
         self.sensorless_data["corrections"][
             self.sensorless_data["mode_index"]
-        ] = amp_to_correct
+        ] = peak[0]
         self.sensorless_data["metrics_stack"].append(
-            metrics_calculated.tolist()
+            metrics.tolist()
         )
         # Signal sensorless results
         events.publish(
             PUBSUB_SENSORLESS_RESULTS,
-            {
-                "metrics": metrics_calculated,
-                "mode_values": mode_values,
-                "mode_label": f"Z{self.sensorless_data['mode_index'] + 1}",
-                "measurement_range": self.sensorless_params["range_max"]
-                - self.sensorless_params["range_min"],
-                "optimal_parameters": optimal_parameters,
-                "fitted_function": fitted_function,
-                "correction_amplitude": amp_to_correct,
-            },
+            SensorlessResultsData(
+                metrics=metrics,
+                modes=modes,
+                mode_label=f"Z{self.sensorless_data['mode_index'] + 1}",
+                peak=peak,
+            ),
         )
         # Update indices
         self.sensorless_data["measurement_index"] = 0

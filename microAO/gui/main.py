@@ -997,7 +997,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             window = None
 
         if window is None:
-            window = SensorlessResultsViewer(None, None)
+            window = SensorlessResultsViewer(None)
             self._components["sensorless_results"] = window.GetId()
 
             window.Show()

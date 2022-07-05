@@ -460,7 +460,7 @@ class RemoteZ():
                 return
 
             # Create results viewer
-            window = SensorlessResultsViewer(None, None)
+            window = SensorlessResultsViewer(None)
             window.Show()
             logger.log.debug("Start sensorless")
             # Start sensorless AO
