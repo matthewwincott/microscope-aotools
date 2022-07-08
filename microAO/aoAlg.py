@@ -372,13 +372,20 @@ class AdaptiveOpticsFunctions():
         )
         # Find the maxima of the parabola
         parabola_maxima = parabola.deriv().roots()[0]
-        # Consider both the parabola maxima and the parabola boundary points
-        peak_candidates = np.array(
-            (
-                (modes[indices_to_fit[0]], metrics[indices_to_fit[0]]),
+        # Consider the boundary points and the maxima, but only if it is within
+        # the boundaries
+        peak_candidates = [
+            (modes[indices_to_fit[0]], metrics[indices_to_fit[0]]),
+            (modes[indices_to_fit[-1]], metrics[indices_to_fit[-1]])
+        ]
+        if (
+            parabola_maxima > peak_candidates[0][0]
+            and parabola_maxima < peak_candidates[1][0]
+        ):
+            peak_candidates.append(
                 (parabola_maxima, parabola(parabola_maxima)),
-                (modes[indices_to_fit[-1]], metrics[indices_to_fit[-1]])
             )
-        )
+        peak_candidates = np.array(peak_candidates)
+        # Find the peak and return it, together with the metrics
         peak_index = np.argmax(peak_candidates[:, 1])
         return peak_candidates[peak_index], metrics
