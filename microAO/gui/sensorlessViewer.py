@@ -19,7 +19,6 @@ class SensorlessResultsData:
     peak: numpy.ndarray
 
 class SensorlessResultsViewer(wx.Frame):
-    _NUMBER_OF_DENSE_POINTS = 100
     _MODE_SPACING_FRACTION = 0.1
 
     def __init__(self, parent):
@@ -29,7 +28,7 @@ class SensorlessResultsViewer(wx.Frame):
 
         # Instance attributes
         self._data = []
-        self._index = 0
+        self._x_position = 0
         self._x_tick_positions = []
         self._x_tick_labels = []
 
@@ -97,7 +96,7 @@ class SensorlessResultsViewer(wx.Frame):
     def _on_start(self):
         self._figure.clear()
         self._data = []
-        self._index = 0
+        self._x_position = 0
         self._x_tick_positions = []
         self._x_tick_labels = []
         self._axes = self._figure.add_subplot()
@@ -108,9 +107,11 @@ class SensorlessResultsViewer(wx.Frame):
         # Calculate parameters
         all_modes = numpy.append(data.modes, data.peak[0])
         mode_range = data.modes.max() - data.modes.min()
-        x_start = self._index * mode_range * (self._MODE_SPACING_FRACTION + 1)
-        x_range = (x_start, x_start + mode_range)
-        margin_x = mode_range * 0.1
+        margin_x = mode_range * self._MODE_SPACING_FRACTION
+        x_range = (
+            self._x_position,
+            self._x_position + mode_range
+        )
 
         # Plot
         self._axes.plot(
@@ -136,7 +137,7 @@ class SensorlessResultsViewer(wx.Frame):
         )
 
         # Configure ticks
-        tick_position = mode_range / 2 + x_start
+        tick_position = x_range[0] + mode_range / 2
         self._x_tick_positions += [tick_position]
         self._x_tick_labels += [data.mode_label]
         self._axes.xaxis.set_major_locator(
@@ -145,12 +146,12 @@ class SensorlessResultsViewer(wx.Frame):
         self._axes.xaxis.set_major_formatter(
             matplotlib.ticker.FixedFormatter(self._x_tick_labels)
         )
+        
+        # Update x position
+        self._x_position = x_range[1] + margin_x
 
         # Set x-axis limits
-        self._axes.set_xlim(left=-margin_x, right=x_range[1] + margin_x)
-
-        # Increment plotting index
-        self._index += 1
+        self._axes.set_xlim(left=-margin_x, right=self._x_position)
 
         # Refresh canvas
         self._canvas.draw()

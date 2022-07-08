@@ -589,35 +589,7 @@ class RemoteFocusControl(wx.Frame):
 
 
     def OnCalibrateZPosition(self, e):
-        # Get parameters
-        inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
-            self,
-            "Get remote Z stack parameters",
-            [
-                "z min",
-                "z max",
-                "z step",
-            ],
-            (
-                0,
-                5,
-                2,
-
-            ),
-        )
-
-        zmin = float(inputs[0])
-        zmax = float(inputs[1])
-        zsteps = int(inputs[2])
-
-        zpos = np.linspace(zmin, zmax, zsteps)
-
-        zstage = self._device.getStage()
-
-        if zstage is not None:
-            self._device.remotez.calibrate_z_pos(zstage, zpos)
-
-        self.updateDatapointList()
+        raise NotImplementedError
 
     def OnCalibrateCounteraction(self, e):
         # Update status bar
