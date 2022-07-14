@@ -1440,14 +1440,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         # Get actuator values and save to file
         try:
-            corrections = self._device.get_corrections()
-            modes = np.zeros(self._device.no_actuators) + sum(
-                [
-                    np.array(correction["modes"])
-                    for correction in corrections.values()
-                    if correction["enabled"] and correction["modes"] is not None
-                ]
-            )
+            modes, _ = self._device.sum_corrections()
             np.savetxt(fpath, modes)
             logger.log.info("Saved modes to file {}".format(fpath))
         except:
@@ -1560,16 +1553,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
     
     def OnSetCurrentAsFlat(self, event: wx.CommandEvent) -> None:
         """ Sets current actuator values as the new flat """
-
-        corrections = self._device.get_corrections()
-        modes = np.zeros(self._device.no_actuators) + sum(
-            [
-                np.array(correction["modes"])
-                for correction in corrections.values()
-                if correction["enabled"] and correction["modes"] is not None
-            ]
-        )
-
+        modes, _ = self._device.sum_corrections()
         self._device.set_system_flat(modes)
 
     def OnTriggerTypeChoice(self, event: wx.CommandEvent):

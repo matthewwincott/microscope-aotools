@@ -370,13 +370,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
     def _on_new_modes(self):
         corrections = self._device.get_corrections(include_default=True)
         del corrections["mode control"]
-        modes = np.zeros(self._device.no_actuators) + sum(
-            [
-                np.array(correction["modes"])
-                for correction in corrections.values()
-                if correction["enabled"] and correction["modes"] is not None
-            ]
-        )
+        modes, _ = self._device.sum_corrections(corrections)
         # Calculate new amplitude to the nearest 0.5
         new_amplitude = max(
             np.ceil(np.max(np.abs(modes)) * 2) / 2,
@@ -411,7 +405,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         modes = []
         for i in range(self._device.no_actuators):
             modes.append(self._mode_controls[i + 1][5].GetValue())
-        self._device.set_correction("mode control", modes)
+        self._device.set_correction("mode control", np.array(modes))
         if self._device.get_corrections()["mode control"]["enabled"]:
             self._device.refresh_corrections()
 

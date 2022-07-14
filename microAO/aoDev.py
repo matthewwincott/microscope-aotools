@@ -757,7 +757,7 @@ class AdaptiveOpticsDevice(Device):
         return strehl_ratio
 
     @Pyro4.expose
-    def get_actuator_pos_from_modes(self, applied_z_modes, offset=None):
+    def get_actuator_pos_from_modes(self, applied_z_modes, offset):
         actuator_pos = np.zeros(self.numActuators)
         if np.any(applied_z_modes != 0.0):
             try:
@@ -768,10 +768,7 @@ class AdaptiveOpticsDevice(Device):
                 _logger.info(err)
                 raise err
 
-        if np.any(offset) is None:
-            actuator_pos += 0.5
-        else:
-            actuator_pos += offset
+        actuator_pos += offset
 
         return actuator_pos
 
@@ -797,36 +794,49 @@ class AdaptiveOpticsDevice(Device):
         self.corrections[name]["enabled"] = enable
 
     @Pyro4.expose
-    def calc_phase_from_corrections(self, corrections):       
+    def sum_corrections(self, corrections=None, only_enabled=True):
+        # If no subset of correction is specified => default to all corrections
+        if corrections is None:
+            corrections = self.corrections
+
+        # Filter out disabled corrections if necessary
+        if only_enabled:
+            corrections = {
+                key: value
+                for key, value in corrections.items()
+                if value["enabled"]
+            }
+
         # Sum corrections (modes and actuator values)
-        corrections_modes = [np.array(val["modes"]) for key, val in corrections.items() if (val["modes"] is not None)]
-        if corrections_modes:
+        corrections_modes = [
+            value["modes"]
+            for value in corrections.values()
+            if value["modes"] is not None
+        ]
+        if len(corrections_modes) > 0:
             total_corrections_phase = sum(corrections_modes)
         else:
             total_corrections_phase = np.zeros(self.numActuators)
 
-        corrections_offset = [(np.array(val["actuator_values"]) - 0.5) for key, val in corrections.items() if (val["actuator_values"] is not None)]
-        if corrections_offset:
+        corrections_offset = [
+            value["actuator_values"] - 0.5
+            for value in corrections.values()
+            if value["actuator_values"] is not None
+        ]
+        if len(corrections_offset) > 0:
             total_corrections_offset = sum(corrections_offset) + 0.5
         else:
-            total_corrections_offset = None
+            total_corrections_offset = np.zeros(self.numActuators) + 0.5
 
         return total_corrections_phase, total_corrections_offset
 
     @Pyro4.expose
     def calc_shape(self):
-        # Filter required corrections
-        corrections = {
-            key: value
-            for key, value in self.corrections.items()
-            if value["enabled"]
-        }
-
         # Get phase and offset from corrections
-        total_corrections_phase, total_corrections_offset = self.calc_phase_from_corrections(corrections)
+        zernikes, offset = self.sum_corrections()
 
         # Get actuator values from corrections
-        return self.get_actuator_pos_from_modes(total_corrections_phase, total_corrections_offset)
+        return self.get_actuator_pos_from_modes(zernikes, offset)
 
     @Pyro4.expose
     def apply_corrections(self):

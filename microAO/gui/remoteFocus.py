@@ -16,10 +16,8 @@
 ## You should have received a copy of the GNU General Public License
 ## along with microAO.  If not, see <http://www.gnu.org/licenses/>.
 
-import os
 import pathlib
 import json
-import copy
 
 from cockpit import events
 import cockpit.gui.dialogs
@@ -30,214 +28,21 @@ import wx
 from wx.core import DirDialog
 import wx.lib.newevent
 
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
-from matplotlib.backends.backend_wx import NavigationToolbar2Wx
+import matplotlib.figure
+import matplotlib.backends.backend_wxagg
+import matplotlib.backends.backend_wx
 import matplotlib.backend_bases
 import matplotlib.patches
 import matplotlib.lines
 import matplotlib.patheffects
+import matplotlib.cm
 
 import skimage.exposure
 
 import numpy as np
-import imageio
 
 from microAO.events import *
-from microAO.gui.common import EVT_VALUE, FloatCtrl, FilterModesCtrl, MinMaxSliderCtrl
-
-RF_DATATYPES = ["zernike", "actuator"]
-
-class RFDatatypeChoice(wx.Choice):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, choices=RF_DATATYPES, **kwargs)
-        
-        # Select first item by default
-        self.SetSelection(0)
-    
-class RFAddDatapointFromFile(wx.Dialog):
-    def __init__(self, parent, **kwargs):
-        super().__init__(parent, title="Add position from file")
-
-        self.data = None
-
-        sizer_dialog = wx.BoxSizer(wx.VERTICAL)
-
-        self.panel = wx.Panel(self)
-        self.sizer_panel = wx.GridBagSizer(vgap=5, hgap=5)
-
-        self.datatype = RFDatatypeChoice(self.panel)
-        self.zpos = FloatCtrl(self.panel, value="0")
-        self.fileCtrlDatapoint = wx.FilePickerCtrl(self.panel, size=(400, -1))
-
-        for row, (label, widget) in enumerate(
-            (
-                ("Type:", self.datatype),
-                ("Z (μm):", self.zpos),
-                ("Datapoint:", self.fileCtrlDatapoint)
-            )
-        ):
-            self.sizer_panel.Add(wx.StaticText(self.panel, label=label), (row, 0))
-            self.sizer_panel.Add(widget, (row, 1))
-
-        self.fileCtrlSysflatLabel = wx.StaticText(self.panel, label="System flat:")
-        self.fileCtrlSysflat = wx.FilePickerCtrl(self.panel, size=(400, 30))
-        self.sizer_panel.Add(self.fileCtrlSysflatLabel, (row + 1, 0))
-        self.sizer_panel.Add(self.fileCtrlSysflat, (row + 1, 1))
-        self.fileCtrlSysflatLabel.Hide()
-        self.fileCtrlSysflat.Hide()
-
-        self.panel.SetSizer(self.sizer_panel)
-
-        sizer_buttons = wx.BoxSizer(wx.HORIZONTAL)
-        confirmBtn = wx.Button(self, label='Ok')
-        cancelBtn = wx.Button(self, label='Close')
-        sizer_buttons.Add(confirmBtn)
-        sizer_buttons.Add(cancelBtn)
-        
-        # Bind events
-        self.datatype.Bind(wx.EVT_CHOICE, self.OnDatatype)
-        confirmBtn.Bind(wx.EVT_BUTTON, self.OnConfirm)
-        cancelBtn.Bind(wx.EVT_BUTTON, self.OnCancel)
-
-        sizer_dialog.Add(self.panel, flags=wx.SizerFlags().Border(wx.ALL, 10))
-        sizer_dialog.Add(sizer_buttons, wx.SizerFlags().Centre().Border(wx.ALL, 10))
-
-        self.SetSizerAndFit(sizer_dialog)
-
-        self.Centre()
-
-    def OnDatatype(self, e: wx.CommandEvent):
-        if e.GetEventObject().GetString(e.GetInt()) == "actuator":
-            self.fileCtrlSysflatLabel.Show()
-            self.fileCtrlSysflat.Show()
-            self.Fit()
-        else:
-            self.fileCtrlSysflatLabel.Hide()
-            self.fileCtrlSysflat.Hide()
-            self.Fit()
-
-    def OnConfirm(self, e):
-        zpos = self.zpos.value
-        values = np.loadtxt(self.fileCtrlDatapoint.GetPath())
-        datatype = self.datatype.GetString(self.datatype.GetSelection())
-
-        if datatype == "actuator":
-            flat_path = self.fileCtrlSysflat.GetPath()
-            if flat_path:
-                flat = np.loadtxt(flat_path)
-                neutral = np.zeros(values.shape) + 0.5
-                values = neutral + values - flat
-            else:
-                print(
-                    "!!! Warning !!! Adding an 'actuator' datapoint without "
-                    "specified system flat..."
-                )
-
-        self.data = {
-            'z': zpos,
-            'datatype': datatype.lower(),
-            'values': values
-        }
-
-        self.EndModal(wx.ID_OK)
-
-    def OnCancel(self, e):
-        self.EndModal(wx.ID_CANCEL)
-    
-    def GetData(self):
-        return self.data
-
-class RFAddDatapointFromCurrent(wx.Dialog):
-    def __init__(self, parent, device, **kwargs):
-        super().__init__(parent, title="Add position from file")
-        
-        self.data = None
-
-        self._device = device
-
-        sizer_dialog = wx.BoxSizer(wx.VERTICAL)
-
-        panel = wx.Panel(self)
-        sizer_panel = wx.BoxSizer(wx.VERTICAL)
-
-        self.datatype_label = wx.StaticText(panel, label="Type:")
-        self.datatype = RFDatatypeChoice(panel)
-        self.zpos_label = wx.StaticText(panel, label="Z (μm):")
-        self.zpos = FloatCtrl(panel, value="0")
-        self.flat_checkbox = wx.CheckBox(panel, label="Subtract system flat")
-
-        hbox = wx.BoxSizer(wx.HORIZONTAL)
-        hbox.Add(self.zpos_label, wx.SizerFlags().Centre())
-        hbox.Add(self.zpos, wx.SizerFlags().Centre())
-        sizer_panel.Add(hbox)
-
-        hbox = wx.BoxSizer(wx.HORIZONTAL)
-        hbox.Add(self.datatype_label, wx.SizerFlags().Centre())
-        hbox.Add(self.datatype, wx.SizerFlags().Centre())
-        sizer_panel.Add(hbox)
-
-        self.flat_checkbox.Hide()
-        sizer_panel.Add(self.flat_checkbox)
-
-        panel.SetSizer(sizer_panel)
-
-        sizer_buttons = wx.BoxSizer(wx.HORIZONTAL)
-        confirmBtn = wx.Button(self, label='Ok')
-        cancelBtn = wx.Button(self, label='Close')
-        sizer_buttons.Add(confirmBtn)
-        sizer_buttons.Add(cancelBtn)
-        
-        # Bind events
-        self.datatype.Bind(wx.EVT_CHOICE, self.OnDatatype)
-        confirmBtn.Bind(wx.EVT_BUTTON, self.OnConfirm)
-        cancelBtn.Bind(wx.EVT_BUTTON, self.OnCancel)
-
-        sizer_dialog.Add(panel, flags=wx.SizerFlags().Border(wx.ALL, 10))
-        sizer_dialog.Add(sizer_buttons, wx.SizerFlags().Centre().Border(wx.ALL, 10))
-
-        self.SetSizerAndFit(sizer_dialog)
-
-        self.Centre()
-
-    def OnDatatype(self, e):
-        if e.GetEventObject().GetString(e.GetInt()) == "actuator":
-            self.flat_checkbox.Show()
-            self.Fit()
-        else:
-            self.flat_checkbox.Hide()
-            self.Fit()
-
-    def OnConfirm(self, e):
-        zpos = self.zpos.value
-        datatype = self.datatype.GetString(self.datatype.GetSelection()).lower()
-
-        if datatype == "zernike":
-            values = self._device.proxy.get_last_modes()
-        elif datatype == "actuator":
-            values = self._device.proxy.get_last_actuator_values()
-            if self.flat_checkbox.GetValue():
-                flat = self._device.proxy.get_system_flat()
-                neutral = np.zeros(values.shape) + 0.5
-                values = neutral + values - flat
-        else:
-            values = None
-
-        assert values is not None
-
-        self.data = {
-            'z': zpos,
-            'datatype': datatype,
-            'values': values
-        }
-
-        self.EndModal(wx.ID_OK)
-
-    def OnCancel(self, e):
-        self.EndModal(wx.ID_CANCEL)
-    
-    def GetData(self):
-        return self.data
+from microAO.gui.common import FilterModesCtrl
 
 class _BeadPicker(wx.Dialog):
     """Window to select a rectangular 2D ROI in a 3D image.
@@ -264,7 +69,7 @@ class _BeadPicker(wx.Dialog):
         self._rect_origin = (0.0, 0.0)
 
         # Draw the figure and add a canvas
-        fig = Figure()
+        fig = matplotlib.figure.Figure(constrained_layout=True)
         axes = fig.add_subplot()
         self._axes_image = axes.imshow(
             self._rescale_image(self._imgs[self._imgs_idx]),
@@ -280,8 +85,9 @@ class _BeadPicker(wx.Dialog):
         axes.set_yticks([])
         axes.set_frame_on(False)
         fig.colorbar(self._axes_image, ax=axes)
-        fig.tight_layout()
-        self._canvas = FigureCanvas(self, wx.ID_ANY, fig)
+        self._canvas = matplotlib.backends.backend_wxagg.FigureCanvasWxAgg(
+            self, wx.ID_ANY, fig
+        )
 
         # Event handling configuration for the canvas
         self._canvas.mpl_connect('motion_notify_event', self._on_motion_notify)
@@ -289,7 +95,9 @@ class _BeadPicker(wx.Dialog):
         self._canvas.mpl_connect('button_release_event', self._on_button_release)
 
         # Add toolbar
-        self._toolbar = NavigationToolbar2Wx(self._canvas)
+        self._toolbar = matplotlib.backends.backend_wx.NavigationToolbar2Wx(
+            self._canvas
+        )
         self._toolbar.Show()
 
         # Add a slider
@@ -378,242 +186,156 @@ class _BeadPicker(wx.Dialog):
         return tuple(map(round, roi))
 
 class RemoteFocusControl(wx.Frame):
+    _DEFAULT_CMAP = matplotlib.cm.get_cmap("viridis")
+
     def __init__(self, parent, device, **kwargs):
         super().__init__(parent, title="Remote focus")
 
         # Set attributes
         self._device = device
-        control_matrix = self._device.proxy.get_controlMatrix()
-        self._n_modes = control_matrix.shape[1]
-        self._n_actuators = control_matrix.shape[0]
-
-        root_panel = wx.Panel(self)
 
         # Create tabbed control interface
-        tabs = wx.Notebook(root_panel)
+        notebook = wx.Notebook(self)
 
-        # Main data panel
-        data_panel = wx.Panel(tabs)
-        self.listbox = wx.ListBox(data_panel)
+        # Data page
+        data_panel = wx.Panel(notebook)
+        self._data_tree = wx.TreeCtrl(data_panel)
 
-        # Button side panel
-        data_panel_btns = wx.Panel(data_panel)
-        addFromCurrentBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from current', size=(150, -1))
-        addFromFileBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Add from file', size=(150, -1))
-        removeBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Remove selected', size=(150, -1))
-        saveBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save data', size=(150, -1))
-        loadBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Load data', size=(150, -1))
-        calibrateZPositionBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate Z position', size=(150, -1))
-        calibrateCounteractionBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Calibrate counteraction', size=(150, -1))
-        saveCalibrationBtn = wx.Button(data_panel_btns, wx.ID_ANY, 'Save all calibration', size=(150, -1))
+        self._data_tree_root = self._data_tree.AddRoot("Datapoints")
+        self._data_tree.SetItemData(self._data_tree_root, None)
 
-        addFromCurrentBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromCurrent)
-        addFromFileBtn.Bind(wx.EVT_BUTTON, self.OnAddDatapointFromFile)
-        removeBtn.Bind(wx.EVT_BUTTON, self.OnRemoveDatapoint)
-        saveBtn.Bind(wx.EVT_BUTTON, self.OnSaveDatapoints)
-        loadBtn.Bind(wx.EVT_BUTTON, self.OnLoadDatapoints)
-        calibrateZPositionBtn.Bind(wx.EVT_BUTTON, self.OnCalibrateZPosition)
-        calibrateCounteractionBtn.Bind(wx.EVT_BUTTON, self.OnCalibrateCounteraction)
-        saveCalibrationBtn.Bind(wx.EVT_BUTTON, self.OnSaveCalibration)
-        
-        data_panel_btns_sizer = wx.BoxSizer(wx.VERTICAL)
-        data_panel_btns_sizer.Add(addFromFileBtn)
-        data_panel_btns_sizer.Add(addFromCurrentBtn)
-        data_panel_btns_sizer.Add(removeBtn)
-        data_panel_btns_sizer.Add(-1, 10)
-        data_panel_btns_sizer.Add(saveBtn)
-        data_panel_btns_sizer.Add(loadBtn)
-        data_panel_btns_sizer.Add(-1, 10)
-        data_panel_btns_sizer.Add(calibrateZPositionBtn)
-        data_panel_btns_sizer.Add(calibrateCounteractionBtn)
-        data_panel_btns_sizer.Add(saveCalibrationBtn)
-        data_panel_btns.SetSizerAndFit(data_panel_btns_sizer)
+        data_add_corr_btn = wx.Button(data_panel, wx.ID_ANY, "Add datapoint from active corrections")
+        data_add_file_btn = wx.Button(data_panel, wx.ID_ANY, "Add datapoint from file")
+        data_rem_btn = wx.Button(data_panel, wx.ID_ANY, "Remove selected datapoint")
+        data_save_btn = wx.Button(data_panel, wx.ID_ANY, "Save datapoints to config")
+        data_calib_btn = wx.Button(data_panel, wx.ID_ANY, "Calibrate counteraction")
 
-        # Layout data panel
-        data_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        hbox = wx.BoxSizer(wx.HORIZONTAL)
-        hbox.Add(data_panel_btns, 0, wx.EXPAND | wx.RIGHT, 5)
-        hbox.Add(self.listbox, 1, wx.EXPAND)
-        data_panel_sizer.Add(hbox, 1, wx.EXPAND | wx.ALL, 5)
+        data_add_corr_btn.Bind(wx.EVT_BUTTON, self._on_add_datapoint_corr)
+        data_add_file_btn.Bind(wx.EVT_BUTTON, self._on_add_datapoint_file)
+        data_rem_btn.Bind(wx.EVT_BUTTON, self._on_remove_datapoint)
+        data_save_btn.Bind(wx.EVT_BUTTON, self._on_save_datapoints)
+        data_calib_btn.Bind(wx.EVT_BUTTON, self._on_calib_counteraction)
+
+        data_btns_sizer = wx.BoxSizer(wx.VERTICAL)
+        data_btns_sizer.Add(data_add_corr_btn, 0, wx.EXPAND)
+        data_btns_sizer.Add(data_add_file_btn, 0, wx.EXPAND)
+        data_btns_sizer.Add(data_rem_btn, 0, wx.EXPAND)
+        data_btns_sizer.Add(data_save_btn, 0, wx.EXPAND)
+        data_btns_sizer.Add(-1, 10)
+        data_btns_sizer.Add(data_calib_btn, 0, wx.EXPAND)
+
+        data_panel_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        data_panel_sizer.Add(data_btns_sizer, 0, wx.EXPAND | wx.ALL, 5)
+        data_panel_sizer.Add(self._data_tree, 1, wx.EXPAND | wx.ALL, 5)
         data_panel.SetSizerAndFit(data_panel_sizer)
 
-        # Control panel
-        control_panel = wx.Panel(tabs)
+        # Fitting plot page
+        fitting_panel = wx.Panel(notebook)
 
-        # Mode slider: drag to set mode
-        row_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        # default_range = 1.5   # range of slider
-        self.remotezSlider = MinMaxSliderCtrl(control_panel, value=0)
-        self.remotezSlider.Bind(EVT_VALUE, self.OnRemoteZ)
-        row_sizer.Add(self.remotezSlider)
-        
-        # Layout
-        self.datatype_control = RFDatatypeChoice(control_panel)
-        self.datatype_control.Bind(wx.EVT_CHOICE, self.OnDatatypeChange)
+        self._fit_filter = FilterModesCtrl(fitting_panel, value="1-12")
+        figure = matplotlib.figure.Figure(constrained_layout=True)
+        self._fit_axes = figure.add_subplot()
+        self._fit_canvas = matplotlib.backends.backend_wxagg.FigureCanvasWxAgg(
+            fitting_panel, wx.ID_ANY, figure
+        )
 
-        control_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        control_panel_sizer.Add(self.datatype_control, 0, wx.ALL, 5)
-        control_panel_sizer.Add(row_sizer, 0, wx.EXPAND | wx.RIGHT | wx.BOTTOM | wx.LEFT, 5)
+        self._fit_filter.Bind(wx.EVT_TEXT, self._on_fitting_filter)
 
-        control_panel.SetSizerAndFit(control_panel_sizer)
+        fitting_panel_sizer = wx.BoxSizer(wx.VERTICAL)
+        fitting_panel_sizer.Add(self._fit_filter, 0, wx.ALL, 5)
+        fitting_panel_sizer.Add(self._fit_canvas, 1, wx.EXPAND | wx.ALL, 5)
+        fitting_panel.SetSizerAndFit(fitting_panel_sizer)
 
-        # Experiment panel
-        experiment_panel = wx.Panel(tabs)
+        # Add pages to notebook
+        notebook.AddPage(data_panel,"Data") 
+        notebook.AddPage(fitting_panel,"Fitting plot")
 
-        btn_remotez_stack = wx.Button(experiment_panel, label="Remote z-stack")
-        btn_remotez_stack.Bind(wx.EVT_BUTTON, self.OnRemoteZStack)
-        
-        # Layout
-
-        experiment_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        experiment_panel_sizer.Add(btn_remotez_stack)
-
-        experiment_panel.SetSizerAndFit(experiment_panel_sizer)
-
-        # Visualisation panel
-        vis_panel = wx.Panel(root_panel)
-
-        self.modes = FilterModesCtrl(vis_panel, value="1-12")
-        self.datatype_vis = RFDatatypeChoice(vis_panel)
-        figure = Figure()
-        self.ax = figure.add_subplot(1, 1, 1)
-        self.canvas = FigureCanvas(vis_panel, wx.ID_ANY, figure)
-
-        self.datatype_vis.Bind(wx.EVT_CHOICE, self.OnDatatypeChange)
-        self.modes.Bind(wx.EVT_TEXT, self.OnDatatypeChange)
-
-        vis_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        vis_panel_config_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        vis_panel_config_sizer.Add(self.datatype_vis, 0, wx.EXPAND | wx.RIGHT, 5)
-        vis_panel_config_sizer.Add(self.modes, 0, wx.EXPAND)
-        vis_panel_sizer.Add(vis_panel_config_sizer, 0, wx.EXPAND | wx.ALL, 5)
-        vis_panel_sizer.Add(self.canvas, 1, wx.EXPAND)
-
-        vis_panel.SetSizerAndFit(vis_panel_sizer)
-        
-        # Add pages to tabs
-        tabs.AddPage(data_panel,"Data") 
-        tabs.AddPage(control_panel,"Control") 
-        tabs.AddPage(experiment_panel,"Experiments") 
-
-        # Layout root panel
-        root_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        root_panel_sizer.Add(tabs, 1, wx.EXPAND | wx.BOTTOM, 12)
-        root_panel_sizer.Add(vis_panel, 1, wx.EXPAND)
-        root_panel.SetSizerAndFit(root_panel_sizer)
-
-        # Main frame sizer
+        # Frame layout
         frame_sizer = wx.BoxSizer(wx.VERTICAL)
-        frame_sizer.Add(root_panel, 1, wx.EXPAND)
+        frame_sizer.Add(notebook, 1, wx.EXPAND)
         self.SetSizerAndFit(frame_sizer)
-        
+
         # Update GUI
-        self.updateDatapointList()
-        self.update()
+        self._update_data_list()
+        self._update_fitting_plot()
 
         # Subscribe to calibration events
-        events.subscribe(PUBSUB_RF_CALIB_CACT_DATA, self.OnCalibrateCounteractionData)
-        events.subscribe(PUBSUB_RF_CALIB_CACT_PROJ, self.OnCalibrateCounteractionProjections)
-
-    def addDatapont(self, z, datatype, value):
-        self._device.remotez.add_datapoint(z, datatype, value)
-        self.updateDatapointList()
-        self.update()
-
-    def removeDatapoint(self, z, datatype):
-        self._device.remotez.remove_datapoint(z, datatype)
-        self.updateDatapointList()
-        self.update()
-
-    def updateDatapointList(self):
-        self.listbox.Clear()
-        items_to_append = []
-        for z in sorted(self._device.remotez.datapoints.keys()):
-            for datatype in self._device.remotez.datapoints[z].keys():
-                if self._device.remotez.datapoints[z][datatype] is None:
-                    continue
-                items_to_append.append(
-                    "{} ({})".format(z, datatype)
-                )
-        self.listbox.AppendItems(items_to_append)
-
-    def OnRemoteZ(self, e):
-        actuator_pos = self._device.remotez.set_z(
-            self.remotezSlider.GetValue(),
-            self.datatype_control.GetStringSelection().lower()
+        events.subscribe(
+            PUBSUB_RF_CALIB_CACT_DATA,
+            self._on_calib_cact_data
+        )
+        events.subscribe(
+            PUBSUB_RF_CALIB_CACT_PROJ,
+            self._on_calib_cact_proj
         )
 
-        # Update gui
-        self.update_zpos()
-
-        # Publish events
-        events.publish(PUBSUB_SET_ACTUATORS, actuator_pos)
-
-    def OnRemoteZStack(self, e):
-        # Get parameters
+    def _on_add_datapoint_corr(self, _: wx.CommandEvent):
+        # Ask for Z position
         inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
             self,
-            "Get remote Z stack parameters",
-            [
-                "z min",
-                "z max",
-                "z step size",
-            ],
-            (
-                0,
-                0,
-                1,
-
-            ),
+            "Datapoint's Z position",
+            ["Relative Z position [um]:"],
+            (0.0,),
         )
+        # Sum the modes and the actuators
+        modes, _ = self._device.sum_corrections()
+        # Add the datapoint and update the list
+        self._device.remotez.add_datapoint(float(inputs[0]), modes)
+        self._update_data_list()
+        self._update_fitting_plot()
 
-        # Select the camera and the imager
-        camera = self.GetParent().getCamera()
-        if camera is None:
-            print(
-                "Aborting remote Z stack because no active camera was "
-                "selected..."
-            )
-            return
-        imager = self.GetParent().getImager()
-        if imager is None:
-            print(
-                "Aborting remote Z stack because no active imager was "
-                "selected..."
-            )
-            return
-
-        zmin = float(inputs[0])
-        zmax = float(inputs[1])
-        zstepssize = float(inputs[2])
-
-        # Select output folder
-        dlg = DirDialog(None, "Select data output directory")
-
-        if dlg.ShowModal() == wx.ID_OK:
-            output_dir = dlg.GetPath()
-        else:
-            return
-
-        # Perform z stack
-        images = self._device.remotez.zstack(
-            zmin,
-            zmax,
-            zstepssize,
-            camera,
-            imager
+    def _on_add_datapoint_file(self, _: wx.CommandEvent):
+        # Ask for file
+        fpath = ""
+        with wx.FileDialog(
+            self,
+            "Add datapoint from file",
+            wildcard="Modes file (*.txt)|*.txt",
+            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
+        ) as fileDialog:
+            if fileDialog.ShowModal() != wx.ID_OK:
+                return
+            fpath = fileDialog.GetPath()
+        modes = np.loadtxt(fpath)
+        # Ask for Z position
+        inputs = cockpit.gui.dialogs.getNumberDialog.getManyNumbersFromUser(
+            self,
+            "Datapoint's Z position",
+            ["Relative Z position [um]:"],
+            (0.0,),
         )
+        # Add the datapoint and update the list
+        self._device.remotez.add_datapoint(float(inputs[0]), modes)
+        self._update_data_list()
+        self._update_fitting_plot()
 
-        # Save data
-        fname = "{}to{}".format(zmin, zmax).replace('.','_')+ ".tif"
-        fpath = os.path.join(output_dir, fname)
-        imageio.mimwrite(fpath, images, format="tif")
+    def _on_remove_datapoint(self, _: wx.CommandEvent):
+        focused_item = self._data_tree.GetFocusedItem()
+        if focused_item.GetID() is None:
+            # There is no valid selection => do nothing
+            return
+        parent = self._data_tree.GetItemParent(focused_item)
+        if parent.GetID() is None:
+            # This is the root node => do nothing
+            return
+        label = self._data_tree.GetItemText(focused_item)
+        if label.startswith("Mode Noll"):
+            # The selected item is a mode, rather than datapoint => do nothing
+            return
+        z = float(label[:-3])
+        self._device.remotez.remove_datapoint(z)
+        self._update_data_list()
+        self._update_fitting_plot()
 
+    def _on_save_datapoints(self, _: wx.CommandEvent):
+        datapoints = {}
+        for z in self._device.remotez.datapoints:
+            datapoints[z] = np.ndarray.tolist(
+                self._device.remotez.datapoints[z]
+            )
+        cockpit.util.userConfig.setValue("rf_datapoints", datapoints)
 
-    def OnCalibrateZPosition(self, e):
-        raise NotImplementedError
-
-    def OnCalibrateCounteraction(self, e):
+    def _on_calib_counteraction(self, _: wx.CommandEvent):
         # Update status bar
         events.publish(
             events.UPDATE_STATUS_LIGHT,
@@ -677,8 +399,86 @@ class RemoteFocusControl(wx.Frame):
             output_dir_path
         )
 
+    def _on_fitting_filter(self, _: wx.CommandEvent):
+        self._update_fitting_plot()
+
+    def _update_data_list(self):
+        self._data_tree.DeleteChildren(self._data_tree_root)
+        # Add items
+        for z in sorted(self._device.remotez.datapoints.keys()):
+            modes = self._device.remotez.datapoints[z]
+            datapoint_node = self._data_tree.AppendItem(
+                self._data_tree_root,
+                f"{z:+.03f} um"
+            )
+            self._data_tree.SetItemData(datapoint_node, None)
+            for mode_index, mode_value in enumerate(modes):
+                mode_node = self._data_tree.AppendItem(
+                    datapoint_node,
+                    f"Mode Noll index: {mode_index + 1}. "
+                    f"Mode value: {mode_value:+.03f}."
+                )
+                self._data_tree.SetItemData(mode_node, None)
+        # Show datapoints
+        self._data_tree.Expand(self._data_tree_root)
+
+    def _update_fitting_plot(self):
+        # Clear axes
+        self._fit_axes.clear()
+
+        # Get all values for the selected datatype
+        zs = []
+        modes_all = []  # NxM where N is number of Zs and M is number of modes
+        for z, modes in sorted(
+            self._device.remotez.datapoints.items(), key=lambda x: x[0]
+        ):
+            zs.append(z)
+            modes_all.append(modes)
+        zs = np.array(sorted(zs))
+        modes_all = np.array(modes_all)
+
+        # Filter modes
+        filter_modes = [
+            mode - 1
+            for mode in self._fit_filter.GetValue()
+            if (mode - 1) < len(self._device.remotez.z_lookup)
+        ]
+
+        # Plot modes
+        for mode_index in filter_modes:
+            # Plot the datapoints
+            self._fit_axes.scatter(
+                zs,
+                modes_all[:, mode_index],
+                label=f"{mode_index + 1}",
+                color=self._DEFAULT_CMAP((mode_index + 1) / len(filter_modes))
+            )
+            # Plot the fitted line
+            z_endpoints = np.array((zs[0], zs[-1]))
+            self._fit_axes.plot(
+                z_endpoints,
+                self._device.remotez.z_lookup[mode_index](z_endpoints),
+                color=self._DEFAULT_CMAP((mode_index + 1) / len(filter_modes))
+            )
+
+        # Plot current z position
+        self.ax_z_position = self._fit_axes.axvline(
+            self._device.remotez.get_z()
+        )
+
+        # Add legend
+        ncol = np.ceil(len(filter_modes) / 10).astype(int)
+        self._fit_axes.legend(
+            title="Mode Noll indices",
+            loc="upper center",
+            ncol=ncol,
+            fontsize="x-small"
+        )
+
+        self._fit_canvas.draw()
+
     @cockpit.util.threads.callInMainThread
-    def OnCalibrateCounteractionData(self, rf_stacks, output_dir_path, defocus_step):
+    def _on_calib_cact_data(self, rf_stacks, output_dir_path, defocus_step):
         events.publish(
             events.UPDATE_STATUS_LIGHT,
             "image count",
@@ -711,144 +511,6 @@ class RemoteFocusControl(wx.Frame):
         )
 
     @cockpit.util.threads.callInMainThread
-    def OnCalibrateCounteractionProjections(self):
+    def _on_calib_cact_proj(self):
         # Clear status light
         events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
-
-    def OnAddDatapointFromFile(self, e):
-        dlg = RFAddDatapointFromFile(self)
-        
-        if dlg.ShowModal() == wx.ID_OK:
-            datapoint = dlg.GetData()
-            self.addDatapont(datapoint["z"], datapoint["datatype"], datapoint["values"])
-        else:
-            pass
-        
-        dlg.Destroy()
-    
-        self.update()
-
-    def OnAddDatapointFromCurrent(self, e):
-        dlg = RFAddDatapointFromCurrent(self, self._device)
-        
-        if dlg.ShowModal() == wx.ID_OK:
-            datapoint = dlg.GetData()
-            self.addDatapont(datapoint["z"], datapoint["datatype"], datapoint["values"])
-        else:
-            pass
-
-        dlg.Destroy()
-
-        self.update()
-
-    def OnRemoveDatapoint(self, e):
-        # Get selected datapoints and remove
-        selected = self.listbox.GetSelections()
-
-        for i in selected:
-            s = self.listbox.GetString(i)
-            z, datatype = s.split(" ")
-            z = float(z)
-            datatype = datatype[1:-1]
-            self.removeDatapoint(z, datatype)
-        # Update GUI
-        self.update()
-
-    def OnSaveDatapoints(self, e):
-        # Select output folder
-        dlg = wx.DirDialog(self, "Select data output directory")
-
-        if dlg.ShowModal() == wx.ID_OK:
-            output_dir = dlg.GetPath()
-        else:
-            return None
-        
-        # Save datapoints
-        self._device.remotez.save_datapoints(output_dir)
-
-    def OnLoadDatapoints(self, e):
-        # Select input directory
-        dlg = wx.DirDialog(None, "Select data output directory")
-        
-        if dlg.ShowModal() == wx.ID_OK:
-            input_dir = dlg.GetPath()
-        else:
-            return None
-
-        # Load datapoints
-        self._device.remotez.load_datapoints(input_dir)
-
-        # Update gui
-        self.updateDatapointList()
-        self.update()
-
-    def OnDatatypeChange(self, e):
-        for control in [self.datatype_vis, self.datatype_control]:
-            evt_emitter = e.GetEventObject()
-
-            # Change other datatype controls
-            if control is not evt_emitter:
-                control.SetStringSelection(evt_emitter.GetStringSelection())
-        
-        # Update GUI
-        self.update()
-
-    def update(self):
-        # Plot data
-        self.ax.clear()
-
-        # Get data
-        current_datatype = self.datatype_vis.GetStringSelection().lower()
-        zs = []
-        values = []
-        for z in self._device.remotez.datapoints.keys():
-            value = self._device.remotez.datapoints[z][current_datatype]
-            if value is not None:
-                zs.append(z)
-                values.append(value)
-        z = np.array(zs)
-        values = np.array(values)
-        z_lookup = self._device.remotez.z_lookup[current_datatype]
-        
-        try:
-            n_measurements = values.shape[0]
-        except IndexError:
-            n_measurements = 0
-
-        # Continue of more than one value
-        if n_measurements > 1:
-            # Plot modes and regression
-            # - filter visible modes
-            filter_modes = [mode-1 for mode in self.modes.GetValue() if (mode-1) < len(z_lookup)]
-            
-            for mode in filter_modes:
-                self.ax.scatter(z, values[:,mode])
-                
-                x1=np.linspace(np.min(z),np.max(z),500)
-                self.ax.plot(z, z_lookup[mode](z))
-
-            # Plot current z position
-            self.ax_z_position = self.ax.axvline(
-                self._device.remotez.get_z()
-            )
-
-        self.canvas.draw()
-
-    def update_zpos(self):
-        try:
-            z = self._device.remotez.get_z()
-            self.ax_z_position.set_xdata([z, z])
-            self.canvas.draw()
-        except AttributeError:
-            # No vline yet, skip
-            pass
-
-    def OnSaveCalibration(self, e):
-        datapoints = copy.deepcopy(self._device.remotez.datapoints)
-        for z in datapoints:
-            for datatype in datapoints[z]:
-                if isinstance(datapoints[z][datatype], np.ndarray):
-                    datapoints[z][datatype] = np.ndarray.tolist(
-                        datapoints[z][datatype]
-                    )
-        cockpit.util.userConfig.setValue("rf_datapoints", datapoints)

@@ -856,6 +856,9 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         """Clear the default correction and apply all other enabled ones."""
         return self.set_phase()
 
+    def sum_corrections(self, corrections=None, only_enabled=True):
+        return self.proxy.sum_corrections(corrections, only_enabled)
+
     def send(self, actuator_values):
         # Send values to device
         self.proxy.send(actuator_values)
@@ -874,20 +877,23 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
     
     def update_control_matrix(self, control_matrix):
         self.proxy.set_controlMatrix(control_matrix)
-        self.remotez.set_control_matrix(control_matrix)
 
     def _rf_get_movement_time(self):
         return (self.RF_DURATION_TRAVEL, self.RF_DURATION_STABILISATION)
 
     def _rf_move_absolute(self, position):
         self.remotez.set_z(position)
-        time.sleep(sum(self._rf_get_movement_time()) * decimal.Decimal(1e-3))
+        time.sleep(
+            float(sum(self._rf_get_movement_time()) * decimal.Decimal(1e-3))
+        )
         events.publish(events.STAGE_MOVER, 2)
         events.publish(events.STAGE_STOPPED, self.RF_POSHAN_NAME)
 
     def _rf_move_relative(self, delta):
         self.remotez.set_z(self.remotez.get_z() + delta)
-        time.sleep(sum(self._rf_get_movement_time()) * decimal.Decimal(1e-3))
+        time.sleep(
+            float(sum(self._rf_get_movement_time()) * decimal.Decimal(1e-3))
+        )
         events.publish(events.STAGE_MOVER, 2)
         events.publish(events.STAGE_STOPPED, self.RF_POSHAN_NAME)
 

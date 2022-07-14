@@ -1,11 +1,7 @@
-import os
-import glob
 import dataclasses
 import copy
 
 import numpy as np
-import scipy
-import h5py
 import tifffile
 import skimage.color
 import skimage.draw
@@ -15,10 +11,7 @@ import skimage.transform
 
 from cockpit import events
 from cockpit.util import userConfig, threads
-from microAO.gui.remoteFocus import RF_DATATYPES
 from microAO.events import *
-
-RF_DATATYPES = ["zernike", "actuator"]
 
 @dataclasses.dataclass(frozen=True)
 class _RemoteFocusStack:
@@ -105,26 +98,16 @@ class RemoteZ():
 
         # Store state
         self.datapoints = {}
-        self.z_lookup = {key:[] for key in RF_DATATYPES}
+        self.z_lookup = []
         self._position = 0
         self._compensation_poly = None
 
-        self._n_actuators = 0
-        self._n_modes = 0
-        control_matrix = self._device.proxy.get_controlMatrix()
-        if control_matrix is not None:
-            self._n_actuators = control_matrix.shape[0]
-            self._n_modes = control_matrix.shape[1]
-
+        # Load datapoints stored in the user config
         datapoints_init = userConfig.getValue("rf_datapoints")
         if datapoints_init:
-            self.datapoints = copy.deepcopy(datapoints_init)
+            for z in datapoints_init:
+                self.datapoints[z] = np.array(datapoints_init[z])
             self.update_calibration()
-            self.set_z(0)
-
-    def set_control_matrix(self, control_matrix):
-        self._n_actuators = control_matrix.shape[0]
-        self._n_modes = control_matrix.shape[1]
 
     @threads.callInNewThread
     def calibrate_counteraction_get_data(
@@ -427,69 +410,48 @@ class RemoteZ():
 
         return images
 
-    def add_datapoint(self, z, datatype, value):
-        if datatype not in RF_DATATYPES:
-            raise Exception(f"Unrecognised datatype '{datatype}'.")
+    def add_datapoint(self, z, modes):
+        self.datapoints[z] = modes
+        self.update_calibration()
+
+    def remove_datapoint(self, z):
         if z not in self.datapoints:
-            self.datapoints[z] = {key: None for key in RF_DATATYPES}
-        self.datapoints[z][datatype] = value
+            return
+        del self.datapoints[z]
+        if len(self.datapoints) < 2:
+            # Not enough datapoints for calibration => reset position to 0 and
+            # clear the remotez correction
+            self._position = 0
+            self._device.set_correction("remotez")
+            self._device.toggle_correction("remotez", False)
+            self._device.refresh_corrections()
+            # Signal cockpit that the stage has moved
+            events.publish(events.STAGE_MOVER, 2)
+            events.publish(events.STAGE_STOPPED, self._device.RF_POSHAN_NAME)
+        # Update calibration
         self.update_calibration()
 
-    def remove_datapoint(self, z, datatype):
-        if datatype not in RF_DATATYPES:
-            raise Exception(f"Unrecognised datatype '{datatype}'.")
-        if z in self.datapoints:
-            self.datapoints[z][datatype] = None
-            if not any([self.datapoints[z][dtype] for dtype in RF_DATATYPES]):
-                del self.datapoints[z]
-        self.update_calibration()
-
-    def update_calibration(self, datatypes=None):
-        # Get data
-        if datatypes is None:
-            datatypes = RF_DATATYPES
-
-        if type(datatypes) is not list:
-            datatypes = [datatypes]
-
-        for datatype in datatypes:
-            z = [z for z in self.datapoints.keys() if self.datapoints[z][datatype] is not None]
-            z = np.array(z)
-            values = np.array([self.datapoints[zz][datatype] for zz in z])
-
-            # Calculate regression
-            try:
-                n_measurements = values.shape[0]
-                n_values = values.shape[1]
-            except IndexError:
-                n_measurements = 0
-                n_values = 0
-            slopes = np.zeros(n_values)
-            intercepts = np.zeros(n_values)
-
-            self.z_lookup[datatype] = []
-
-            # Continue of more than one value
-            if n_measurements > 1:
-                for i in range(n_values):
-                    slope, intercept, r, p, se = scipy.stats.linregress(z, values[:,i])
-                    slopes[i] = slope
-                    intercepts[i] = intercept
-                    coef = [slope, intercept]
-                    # coef = np.polyfit(z,values[:,i],1)
-
-                    self.z_lookup[datatype].append(np.poly1d(coef)) 
-
-    def calc_shape(self, z, datatype="actuator"):
-        if self._n_actuators == 0:
-            raise Exception(
-                "Failed to calculate wavefront shape for remote focusing "
-                "because the adaptive element has not been calibrated."
+    def update_calibration(self):
+        # Clear the lookup
+        self.z_lookup = []
+        # Check if there are enough datapoints
+        zs = sorted(self.datapoints.keys())
+        if len(zs) < 2:
+            return
+        # Fit a line to the Zs for each mode
+        modes = np.array([self.datapoints[z] for z in zs])
+        for mode_index in range(modes.shape[1]):
+            self.z_lookup.append(
+                np.polynomial.Polynomial.fit(zs, modes[:, mode_index], 1)
             )
-        if len(self.z_lookup[datatype]) < 2:
+        # Apply new lookup
+        self.set_z(self._position)
+
+    def calc_shape(self, z):
+        if len(self.z_lookup) < 2:
             raise Exception(
                 "Failed to calculate wavefront shape for remote focusing "
-                "because the remote focusing has not been calibrated."
+                "because it has not been calibrated."
             )
 
         # Get current remotez correction
@@ -499,17 +461,8 @@ class RemoteZ():
         if self._compensation_poly:
             z = self._compensation_poly(z)
 
-        try:
-            if datatype == "zernike":
-                values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_modes)])
-                self._device.set_correction("remotez", modes=values)
-            elif datatype == "actuator":
-                values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_actuators)])
-                self._device.set_correction("remotez", actuator_values=values)
-
-        except IndexError:
-            # No lookup data
-            pass
+        modes = np.array([poly(z) for poly in self.z_lookup])
+        self._device.set_correction("remotez", modes=modes)
 
         # Get shape
         self._device.toggle_correction("remotez", True)
@@ -528,59 +481,21 @@ class RemoteZ():
 
         return actuator_pos
 
-    def set_z(self, z, datatype="actuator"):
-        if self._n_actuators == 0:
-            raise Exception(
-                "Failed to change the remote focus plane because the adaptive "
-                "element has not been calibrated."
-            )
-        if len(self.z_lookup[datatype]) < 2:
+    def set_z(self, z):
+        if len(self.z_lookup) < 2:
             raise Exception(
                 "Failed to change the remote focus plane because the remote "
                 "focusing has not been calibrated."
             )
 
-        try:
-            if datatype == "zernike":
-                values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_modes)])
-                self._device.set_correction("remotez", modes=values)
-            elif datatype == "actuator":
-                values = np.array([self.z_lookup[datatype][i](z) for i in range(0,self._n_actuators)])
-                self._device.set_correction("remotez", actuator_values=values)
+        corrections = self._device.get_corrections()
 
-            actuator_pos = self._device.refresh_corrections()
+        modes = np.array([poly(z) for poly in self.z_lookup])
+        self._device.set_correction("remotez", modes=modes)
+        if "remotez" in corrections and corrections["remotez"]["enabled"]:
+            self._device.refresh_corrections()
 
-            self._position = z
-
-        except IndexError:
-            # No lookup data
-            pass
-
-        return actuator_pos
+        self._position = z
 
     def get_z(self):
         return self._position
-
-    def save_datapoints(self, output_dir):
-        for z in self.datapoints.keys():
-            for datatype in self.datapoints[z].keys():
-                value = self.datapoints[z][datatype]
-                if value is None:
-                    continue
-                fname = "{}-{}.h5".format(datatype, str(z).replace('.', '_'))
-                fpath = os.path.join(output_dir, fname)
-
-                with h5py.File(fpath, 'w') as f:
-                    f.create_dataset("z", data=z)
-                    f.create_dataset("datatype", data=datatype)
-                    f.create_dataset("value", data=value)
-
-    def load_datapoints(self, input_dir):
-        search_string = str(os.path.join(input_dir, '*.h5'))
-
-        for fpath in glob.glob(search_string):
-            with h5py.File(fpath, 'r') as f:
-                z = f["z"][()]
-                datatype = f["datatype"][()].decode("utf-8")
-                value = f["value"][()]
-                self.add_datapoint(z, datatype, value)
