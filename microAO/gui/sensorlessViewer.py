@@ -19,7 +19,7 @@ class SensorlessResultsData:
     peak: numpy.ndarray
 
 class SensorlessResultsViewer(wx.Frame):
-    _MODE_SPACING_FRACTION = 0.1
+    _MODE_SPACING_FRACTION = 0.5
 
     def __init__(self, parent):
         super().__init__(parent, title="Metric viewer")
@@ -31,6 +31,8 @@ class SensorlessResultsViewer(wx.Frame):
         self._x_position = 0
         self._x_tick_positions = []
         self._x_tick_labels = []
+        self._max_scan_range = 0
+        self._margin_x = 0
 
         # Add figure and canvas
         self._figure = matplotlib.figure.Figure(constrained_layout=True)
@@ -93,31 +95,41 @@ class SensorlessResultsViewer(wx.Frame):
         with open(fpath, "w", encoding="utf-8") as fo:
             json.dump(data_dicts, fo, sort_keys=True, indent=4)
 
-    def _on_start(self):
+    def _on_start(self, max_scan_range):
         self._figure.clear()
         self._data = []
         self._x_position = 0
         self._x_tick_positions = []
         self._x_tick_labels = []
+        self._max_scan_range = max_scan_range
+        self._margin_x = max_scan_range * self._MODE_SPACING_FRACTION
         self._axes = self._figure.add_subplot()
         self._axes.set_xlabel("Mode")
         self._axes.set_ylabel("Metric")
 
     def _update(self, data: SensorlessResultsData):
         # Calculate parameters
-        all_modes = numpy.append(data.modes, data.peak[0])
-        mode_range = data.modes.max() - data.modes.min()
-        margin_x = mode_range * self._MODE_SPACING_FRACTION
         x_range = (
             self._x_position,
-            self._x_position + mode_range
+            self._x_position + self._max_scan_range
         )
+
+        # Draw vertical line
+        if self._x_position > 0:
+            # This is not the first iteration
+            x_line = self._x_position - self._margin_x / 2
+            spine = list(self._axes.spines.values())[0]
+            self._axes.axvline(
+                x=x_line,
+                color=spine.get_edgecolor(),
+                linewidth=spine.get_linewidth()
+            )
 
         # Plot
         self._axes.plot(
             numpy.interp(
                 data.modes,
-                (min(all_modes), max(all_modes)),
+                (min(data.modes), max(data.modes)),
                 x_range,
             ),
             data.metrics,
@@ -127,7 +139,7 @@ class SensorlessResultsViewer(wx.Frame):
         self._axes.plot(
             numpy.interp(
                 data.peak[0],
-                (min(all_modes), max(all_modes)),
+                (min(data.modes), max(data.modes)),
                 x_range,
             ),
             data.peak[1],
@@ -137,7 +149,7 @@ class SensorlessResultsViewer(wx.Frame):
         )
 
         # Configure ticks
-        tick_position = x_range[0] + mode_range / 2
+        tick_position = x_range[0] + self._max_scan_range / 2
         self._x_tick_positions += [tick_position]
         self._x_tick_labels += [data.mode_label]
         self._axes.xaxis.set_major_locator(
@@ -148,10 +160,13 @@ class SensorlessResultsViewer(wx.Frame):
         )
         
         # Update x position
-        self._x_position = x_range[1] + margin_x
+        self._x_position = x_range[1] + self._margin_x
 
         # Set x-axis limits
-        self._axes.set_xlim(left=-margin_x, right=self._x_position)
+        self._axes.set_xlim(
+            left=-self._margin_x / 2,
+            right=self._x_position - self._margin_x / 2
+        )
 
         # Refresh canvas
         self._canvas.draw()

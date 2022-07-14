@@ -602,7 +602,13 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         }
 
         # Signal start of sensorless AO routine
-        events.publish(PUBSUB_SENSORLESS_START)
+        max_scan_range = max(
+            [
+                mode.offsets.max() - mode.offsets.min()
+                for mode in self.sensorless_params["modes"]
+            ]
+        )
+        events.publish(PUBSUB_SENSORLESS_START, max_scan_range)
 
         # Apply the first set of modes
         new_modes = self.sensorless_data["corrections"].copy()
