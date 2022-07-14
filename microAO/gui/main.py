@@ -1,4 +1,3 @@
-from microAO.aoDev import AdaptiveOpticsDevice
 from microAO.gui import *
 from microAO.gui.modeControl import ModesControl
 from microAO.gui.remoteFocus import RemoteFocusControl
@@ -11,6 +10,7 @@ import cockpit.events
 import cockpit.gui.device
 import cockpit.gui.camera.window
 from cockpit.util import logger, userConfig
+from cockpit import depot
 
 import microscope.devices
 
@@ -25,7 +25,6 @@ from matplotlib.backends.backend_wxagg import FigureCanvasWxAgg as FigureCanvas
 
 import numpy as np
 
-import aotools
 import typing
 import pathlib
 import json
@@ -49,28 +48,6 @@ def _np_grey_img_to_wx_image(np_img: np.ndarray) -> wx.Image:
         scaled_img_rgb,
     )
     return wx_img
-
-def _subtractModesFromUnwrappedPhase(unwrapped_phase, modes=(0, 1, 2)):
-    # XXX: AdaptiveOpticsDevice.getzernikemodes method does not
-    # actually make use of its instance.  It should have been a free
-    # function or at least a class method.  Using it like this means
-    # we can compute it client-side instead of having send the data.
-    # This should be changed in microscope-aotools.
-    #
-    # Get the Zernike modes of the phase map, up to the largest requested
-    z_amps = AdaptiveOpticsDevice.getzernikemodes(
-        None,
-        unwrapped_phase,
-        max(modes) + 1
-    )
-    # Suppress the modes which are not required
-    for i in range(len(z_amps)):
-        if i not in modes:
-            z_amps[i] = 0
-    # Convert the modes to a phase map
-    phase_modes = aotools.phaseFromZernikes(z_amps, unwrapped_phase.shape[0])
-    # Subtract the modes' phase from the unwrapped phase
-    return unwrapped_phase - phase_modes
 
 def _computePowerSpectrum(interferogram):
     interferogram_ft = np.fft.fftshift(np.fft.fft2(interferogram))
@@ -1072,23 +1049,21 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         sizer_main.Add(checklist_sizer, 0, wx.EXPAND)
         self.SetSizer(sizer_main)
 
-    def _get_image_and_unwrap(self) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int]]:
+    def OnVisualisePhase(self, _: wx.CommandEvent) -> None:
         # Select the camera whose window contains the interferogram
-        camera = self._device.getCamera()
+        camera = self.getCamera()
         if camera is None:
-            logger.log.error(
+            raise Exception(
                 "Failed to visualise phase because no active cameras were "
                 "found."
             )
-            return
         # Get the image data
         phase = cockpit.gui.camera.window.getImageForCamera(camera)
         if phase is None:
-            logger.log.error(
+            raise Exception(
                 f"The camera view for camera '{camera.name}' contained no "
                 "image. Please capture an interferogram first."
             )
-            return
         # Select the ROI
         with _ROISelect(self, phase) as dlg:
             if dlg.ShowModal() == wx.ID_OK:
@@ -1098,33 +1073,22 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                     (roi[1], roi[0], roi[2])
                 )
             else:
-                logger.log.error(
+                raise Exception(
                     "ROI selection cancelled. Aborting phase visualisation..."
                 )
-                return
         # Update device ROI and filter
         self._device.updateROI()
         self._device.checkFourierFilter()
-        # Unwrap the phase image
-        return (phase, self._device.unwrap_phase(phase), (roi[1], roi[0], roi[2]))
-
-    def OnVisualisePhase(self, event: wx.CommandEvent) -> None:
-        phase, phase_unwrapped, roi = self._get_image_and_unwrap()
-        if phase_unwrapped is None:
-            # All the logging has already been done in the
-            # _get_image_and_unwrap() method
-            return
-        # Subtract piston, tip, and tilt modes
-        phase_unwrapped_mptt = _subtractModesFromUnwrappedPhase(phase_unwrapped)
-        # Compute the RMS error of the adjusted unwrapped phase
-        true_flat = np.zeros(np.shape(phase_unwrapped_mptt))
-        mask = cockpit_device.aoAlg.mask
-        phase_unwrapped_MPTT_RMS_error = np.sqrt(
-            np.mean((true_flat[mask] - phase_unwrapped_mptt[mask]) ** 2)
+        # Unwrap the phase
+        phase_unwrapped = self._device.unwrap_phase(phase)
+        # Get the RMS error of the unwrapped phase without the Piston, Tip, and
+        # Tilt modes
+        phase_unwrapped_MPTT_RMS_error = self._device.calc_error_RMS(
+            phase_unwrapped
         )
         # Calculate the power spectrum
         phase_power_spectrum = _computePowerSpectrum(phase)
-
+        # View the phase
         frame = _PhaseViewer(
             self,
             phase,
@@ -1157,7 +1121,32 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         params["poke_steps"] = int(inputs[2])
 
     def OnCalibrationData(self, event: wx.CommandEvent) -> None:
-        self._device.calibrationGetData(self)
+        # Select the camera which will be used to capture images
+        camera = self.getCamera()
+        if camera is None:
+            logger.log.error(
+                "Failed to start calibration because no active cameras were "
+                "found."
+            )
+            return
+        # Select the file to which the image stack will be written
+        default_directory = ""
+        if isinstance(self._device._calibration_data["output_filename"], pathlib.Path):
+            default_directory = self._device._calibration_data["output_filename"].parent
+        with wx.FileDialog(
+            self,
+            message="Save calibration image stack",
+            defaultDir=default_directory,
+            wildcard="TIFF images (*.tif; *.tiff)|*.tif;*.tiff",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
+        ) as file_dialog:
+            if file_dialog.ShowModal() != wx.ID_OK:
+                return
+            self._device._calibration_data["output_filename"] = pathlib.Path(
+                file_dialog.GetPath()
+            )
+        # Start the calibration process
+        self._device.calibrationGetData(camera.name)
 
     def OnCalibrationCalc(self, event: wx.CommandEvent) -> None:
         # Navigate to the image file
@@ -1216,11 +1205,23 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
     def OnCalcSystemFlat(self, event: wx.CommandEvent) -> None:
         del event
-        sys_flat_values, best_z_amps_corrected = self._device.sysFlatCalc()
-        logger.log.debug(
-            "Zernike modes amplitudes corrected:\n %s", best_z_amps_corrected
-        )
-        logger.log.debug("System flat actuator values:\n%s", sys_flat_values)
+
+        # Select the interferometer camera and the imager
+        camera = self.getCamera()
+        if camera is None:
+            logger.log.error(
+                "Failed to select active cameras for flattening the phase."
+            )
+            return
+        imager = self.getImager()
+        if imager is None:
+            logger.log.error(
+                "Failed to select an imager for flattening the phase."
+            )
+            return
+
+        # Obtain the system flat
+        self._device.sysFlatCalc(camera, imager)
 
     def OnResetDM(self, event: wx.CommandEvent) -> None:
         del event
@@ -1237,7 +1238,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         action = self._device.correctSensorlessSetup
 
-        camera = self._device.getCamera()
+        camera = self.getCamera()
 
         if camera is None:
             return
@@ -1338,7 +1339,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         try:
             # Load flat values from file and check format
             new_flat = np.loadtxt(fpath)
-            assert (new_flat.ndim == 1 and new_flat.size <= self._device.no_actuators)
+            assert new_flat.ndim == 1
 
             # Set new flat and refresh corrections
             self._device.set_system_flat(new_flat)
@@ -1464,24 +1465,34 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             [
                 "Number of iterations",
                 "Error threshold",
-                "System Flat Noll indeces",
+                "Noll indices to ignore",
             ],
             (
-                params["num_it"],
-                params["error_thresh"],
-                params["nollZernike"].tolist(),
+                int(params["iterations"]),
+                params["error_threshold"],
+                (params["modes_to_ignore"] + 1).tolist(),
             ),
         )
-        params["num_it"]= int(inputs[0])
-        params["error_thresh"] = np.float(inputs[1])
+        iterations = float(inputs[0])
+        error_threshold = float(inputs[1])
+        if iterations == float("inf") and error_threshold == float("inf"):
+            wx.MessageBox(
+                "Cannot have both the iterations and the error threshold set "
+                "to infinity, because the flattening algorithm will not "
+                "converge.",
+                caption="Error"
+            )
+            return
+        params["iterations"]= iterations
+        params["error_threshold"] = error_threshold
 
         # FIXME: we should probably do some input checking here and
         # maybe not include a space in `split(", ")`
         if inputs[2] == "":
-            params["nollZernike"] = None
+            params["modes_to_ignore"] = np.array([])
         else:
-            params = np.asarray(
-                [int(z_ind) for z_ind in inputs[-1][1:-1].split(", ")]
+            params["modes_to_ignore"] = np.asarray(
+                [int(z_ind) - 1 for z_ind in inputs[2][1:-1].split(", ")]
             )
 
     def OnSetMetric(self, event: wx.CommandEvent) -> None:
@@ -1549,8 +1560,17 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
     
     def OnSetCurrentAsFlat(self, event: wx.CommandEvent) -> None:
         """ Sets current actuator values as the new flat """
-        current_actuator_values = self._device.proxy.get_last_actuator_values()
-        self._device.set_system_flat(current_actuator_values)
+
+        corrections = self._device.get_corrections()
+        modes = np.zeros(self._device.no_actuators) + sum(
+            [
+                np.array(correction["modes"])
+                for correction in corrections.values()
+                if correction["enabled"] and correction["modes"] is not None
+            ]
+        )
+
+        self._device.set_system_flat(modes)
 
     def OnTriggerTypeChoice(self, event: wx.CommandEvent):
         try:
@@ -1609,7 +1629,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         state = self.checklist_corrections.IsChecked(index)
         self._device.toggle_correction(name, state)
         self._device.refresh_corrections()
-    
+
     def OnCorrectionChange(self, name, state):
         items = {
             self.checklist_corrections.GetString(i):self.checklist_corrections.IsChecked(i)
@@ -1624,3 +1644,73 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                 i,
                 items[self.checklist_corrections.GetString(i)]
             )
+
+    def getCamera(self):
+        cameras = depot.getActiveCameras()
+
+        camera = None
+        if not cameras:
+            wx.MessageBox(
+                "There are no cameras enabled.", caption="No cameras active"
+            )
+        elif len(cameras) == 1:
+            camera = cameras[0]
+        else:
+            cameras_dict = dict([(camera.descriptiveName, camera) for camera in cameras])
+
+            dlg = wx.SingleChoiceDialog(
+                None, "Select camera", 'Camera', list(cameras_dict.keys()),
+            wx.CHOICEDLG_STYLE
+                )
+            if dlg.ShowModal() == wx.ID_OK:
+                camera = cameras_dict[dlg.GetStringSelection()]
+
+        return camera
+
+    def getImager(self):
+        imagers = depot.getHandlersOfType(depot.IMAGER)
+
+        imager = None
+        if not imagers:
+            wx.MessageBox(
+                "There are no available imagers.", caption="No imagers"
+            )
+        elif len(imagers) == 1:
+            imager = imagers[0]
+        else:
+            imagers_dict = dict([(imager.name, imager) for imager in imagers])
+
+            dlg = wx.SingleChoiceDialog(
+                None, "Select imager", 'Imager', list(imagers_dict.keys()),
+            wx.CHOICEDLG_STYLE
+                )
+            if dlg.ShowModal() == wx.ID_OK:
+                imager = imagers_dict[dlg.GetStringSelection()]
+
+        return imager
+
+    def getStage(self, axis=2):
+        stages = depot.getSortedStageMovers()
+
+        stage = None
+
+        if axis not in stages.keys():
+            wx.MessageBox(
+                "There are no stages for axis {} enabled.".format(axis), caption="No stages with axis {} active".formaT(axis)
+            )
+
+            return None
+
+        if len(stages[axis]) == 1:
+            stage = stages[axis][0]
+        else:
+            stages_dict = dict((stage.name, stage) for stage in stages[axis])
+
+            dlg = wx.SingleChoiceDialog(
+                None, "Select stage", 'Stage', list(stages_dict.keys()),
+            wx.CHOICEDLG_STYLE
+                )
+            if dlg.ShowModal() == wx.ID_OK:
+                stage = stages_dict[dlg.GetStringSelection()]
+
+        return stage

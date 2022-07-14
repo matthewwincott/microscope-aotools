@@ -21,21 +21,13 @@
 #Import required packs
 import numpy as np
 from scipy.ndimage.measurements import center_of_mass
-from scipy.signal import tukey, gaussian
+from scipy.signal import tukey
 from skimage.filters import threshold_otsu
-from scipy.optimize import curve_fit
 import aotools
 import scipy.stats as stats
 from skimage.restoration import unwrap_phase
 from scipy.integrate import trapz
 import microAO.aoMetrics as metrics
-
-import logging
-
-_logger = logging.getLogger(__name__)
-
-def gaussian_function(x, offset, normalising, mean, std_dev):
-    return (offset - normalising) + (normalising * np.exp((-(x - mean) ** 2) / (2 * std_dev ** 2)))
 
 metric_function = {
     'fourier': metrics.measure_fourier_metric,
@@ -389,3 +381,20 @@ class AdaptiveOpticsFunctions():
         # Find the peak and return it, together with the metrics
         peak_index = np.argmax(peak_candidates[:, 1])
         return peak_candidates[peak_index], metrics
+
+    def calc_phase_error_RMS(self, phase, modes_to_subtract=(0, 1, 2)):
+        # NOTE: only works if modes_to_subtract is a contiguous subset of modes
+        # Subtract modes
+        modes = self.get_zernike_modes(
+            phase, max(modes_to_subtract), resize_dim=128
+        )
+        phase_modes_to_subtract = aotools.phaseFromZernikes(
+            modes,
+            phase.shape[0]
+        )
+        phase_subtracted = phase - phase_modes_to_subtract
+        # Calculate RMS
+        true_flat = np.zeros(np.shape(phase_subtracted))
+        return np.sqrt(
+            np.mean((true_flat[self.mask] - phase_subtracted[self.mask]) ** 2)
+        )

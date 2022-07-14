@@ -567,6 +567,22 @@ class RemoteFocusControl(wx.Frame):
             ),
         )
 
+        # Select the camera and the imager
+        camera = self.GetParent().getCamera()
+        if camera is None:
+            print(
+                "Aborting remote Z stack because no active camera was "
+                "selected..."
+            )
+            return
+        imager = self.GetParent().getImager()
+        if imager is None:
+            print(
+                "Aborting remote Z stack because no active imager was "
+                "selected..."
+            )
+            return
+
         zmin = float(inputs[0])
         zmax = float(inputs[1])
         zstepssize = float(inputs[2])
@@ -580,7 +596,13 @@ class RemoteFocusControl(wx.Frame):
             return
 
         # Perform z stack
-        images = self._device.remotez.zstack(zmin, zmax, zstepssize)
+        images = self._device.remotez.zstack(
+            zmin,
+            zmax,
+            zstepssize,
+            camera,
+            imager
+        )
 
         # Save data
         fname = "{}to{}".format(zmin, zmax).replace('.','_')+ ".tif"
@@ -599,9 +621,9 @@ class RemoteFocusControl(wx.Frame):
             "Remote focus calibration | Configuring..."
         )
         # Get all the necessary handlers
-        handlers_zstage = self._device.getStage()
-        handlers_camera = self._device.getCamera()
-        handlers_imager = self._device.getImager()
+        handlers_zstage = self.GetParent().getStage()
+        handlers_camera = self.GetParent().getCamera()
+        handlers_imager = self.GetParent().getImager()
         # Select output directory
         output_dir_path = None
         with DirDialog(None, "Select data output directory") as dlg:

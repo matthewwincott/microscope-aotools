@@ -31,7 +31,7 @@ mirror as currently mounted on DeepSIM in Oxford.
 import os
 import time
 import queue
-import pathlib
+
 import json
 import decimal
 import dataclasses
@@ -84,11 +84,9 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         # Need initial values for system flat calculations
         self.sys_flat_parameters = {
-            "num_it" : 10,
-            "error_thresh" : np.inf,
-            "nollZernike" : np.linspace(
-                start=4, stop=68, num=65, dtype=int
-            )
+            "iterations" : 10,
+            "error_threshold" : np.inf,
+            "modes_to_ignore" : np.array([0, 1, 2])
         }
 
         # Need intial values for sensorless AO
@@ -155,7 +153,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         try:
             sys_flat = userConfig.getValue("dm_sys_flat")
             if sys_flat is not None:
-                self.proxy.set_system_flat(np.asarray(sys_flat))
+                self.set_system_flat(np.asarray(sys_flat))
         except Exception:
             pass
 
@@ -215,12 +213,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
     def acquireUnwrappedPhase(self):
         return self.proxy.acquire_unwrapped_phase()
 
-    def getZernikeModes(self, image_unwrap, noZernikeModes):
-        return self.proxy.getzernikemodes(image_unwrap, noZernikeModes)
-
-    def wavefrontRMSError(self, phase_map):
-        return self.proxy.wavefront_rms_error(phase_map)
-
     def updateROI(self):
         circle_parameters = userConfig.getValue("dm_circleParams")
         self.proxy.set_roi(*circle_parameters)
@@ -270,31 +262,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             except Exception:
                 raise e
 
-    def calibrationGetData(self, parent):
-        # Select the camera which will be used to capture images
-        camera = self.getCamera()
-        if camera is None:
-            logger.log.error(
-                "Failed to start calibration because no active cameras were "
-                "found."
-            )
-            return
-        # Select the file to which the image stack will be written
-        default_directory = ""
-        if isinstance(self._calibration_data["output_filename"], pathlib.Path):
-            default_directory = self._calibration_data["output_filename"].parent
-        with wx.FileDialog(
-            parent,
-            message="Save calibration image stack",
-            defaultDir=default_directory,
-            wildcard="TIFF images (*.tif; *.tiff)|*.tif;*.tiff",
-            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
-        ) as file_dialog:
-            if file_dialog.ShowModal() != wx.ID_OK:
-                return
-            self._calibration_data["output_filename"] = pathlib.Path(
-                file_dialog.GetPath()
-            )
+    def calibrationGetData(self, camera_name):
         # Generate actuator patterns
         self._calibration_data["actuator_patterns"] = np.zeros(
             (
@@ -318,8 +286,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self._calibrationImageSaver()
         # Subscribe to new image event
         events.subscribe(
-            events.NEW_IMAGE % camera.name,
-            lambda image, _: self._calibrationOnImage(camera.name, image)
+            events.NEW_IMAGE % camera_name,
+            lambda image, _: self._calibrationOnImage(camera_name, image)
         )
         # Apply the first actuator pattern and wait for it to settle
         self.send(self._calibration_data["actuator_patterns"][0])
@@ -407,6 +375,9 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Unwrap the phase
         return aoAlg.unwrap_interferometry(image)
 
+    def calc_error_RMS(self, unwrapped_phase, modes_to_subtract=(0, 1, 2)):
+        return aoAlg.calc_phase_error_RMS(unwrapped_phase, modes_to_subtract)
+
     def _mask_circular(self, dims, radius=None, centre=None):
         # Init radius and centre if necessary
         if centre is None:
@@ -420,6 +391,16 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         dist = np.sqrt(((meshgrid - centre.reshape(-1, 1, 1)) ** 2).sum(axis=0))
         # Return a binary mask for the specified radius
         return dist <= radius
+
+    def _get_no_discontinuities(self, phase_unwrapped):
+        phase_unwrapped_diff = (
+            abs(np.diff(np.diff(phase_unwrapped, axis=1), axis=0))
+            * self._mask_circular(
+                np.array(phase_unwrapped.shape),
+                radius=min(phase_unwrapped.shape) / 2 - 3
+            )[:-1, :-1]
+        )
+        return np.shape(np.where(phase_unwrapped_diff > 2 * np.pi))[1]
 
     @cockpit.util.threads.callInNewThread
     def calculateControlMatrix(self, actuator_values, file_path_image):
@@ -441,21 +422,14 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                     f"{image_index + 1}/{actuator_values.shape[0]}."
                 )
                 # Get the image data
-                image = page.asarray()
+                phase = page.asarray()
                 # Phase unwrap
-                image_unwrapped = self.unwrap_phase(image)
+                phase_unwrapped = self.unwrap_phase(phase)
                 # Check for discontinuities
-                image_unwrapped_diff = (
-                    abs(np.diff(np.diff(image_unwrapped, axis=1), axis=0))
-                    * self._mask_circular(
-                        np.array(image_unwrapped.shape),
-                        radius=min(image_unwrapped.shape) / 2 - 3
-                    )[:-1, :-1]
+                no_discontinuities = self._get_no_discontinuities(
+                    phase_unwrapped
                 )
-                no_discontinuities = np.shape(
-                    np.where(image_unwrapped_diff > 2 * np.pi)
-                )[1]
-                if no_discontinuities > np.prod(image_unwrapped.shape) / 1000.0:
+                if no_discontinuities > np.prod(phase_unwrapped.shape) / 1000.0:
                     logger.error(
                         f"Unwrapped phase for image {image_index} contained "
                         "discontinuites. Aborting calibration..."
@@ -463,7 +437,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 else:
                     # Calculate Zernike coefficients
                     zernike_coefficients[image_index] = aoAlg.get_zernike_modes(
-                        image_unwrapped,
+                        phase_unwrapped,
                         self.no_actuators
                     )
                 # Increment the image index
@@ -500,7 +474,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         # The default system corrections should be for the zernike
         # modes we can accurately recreate.
-        self.sys_flat_parameters["sysFlatNollZernike"] = ((np.abs(np.diag(assay)) < 0.25).nonzero()[0]) + 1
+        self.sys_flat_parameters["ignoreZernike"] = (np.abs(np.diag(assay)) > 0.25).nonzero()[0]
 
         # Restore original corrections
         for key, value in original_corrections.items():
@@ -509,36 +483,82 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
         return assay
 
-    def sysFlatCalc(self):
+    @cockpit.util.threads.callInNewThread
+    def sysFlatCalc(self, camera, imager):
+        params = self.sys_flat_parameters
+        # Ensure phase unwrapping works and the system is calibrated
         self.updateROI()
         self.checkFourierFilter()
         self.checkIfCalibrated()
-
-        # Ensure all corrections are disabled
+        # Ensure all corrections, except the system flat one, are disabled
         original_corrections = self.get_corrections()
         self.reset()
-
-        control_matrix = self.proxy.get_controlMatrix()
-        n_actuators = control_matrix.shape[0]
-        n_modes = control_matrix.shape[1]
-
-        z_ignore = np.zeros(n_modes)
-        if self.sys_flat_parameters["sysFlatNollZernike"] is not None:
-            z_ignore[self.sys_flat_parameters["sysFlatNollZernike"] - 1] = 1
-        sys_flat_values, best_z_amps_corrected = self.proxy.flatten_phase(
-            iterations=self.sys_flat_parameters["num_it"],
-            error_thresh=self.sys_flat_parameters["error_thresh"],
-            z_modes_ignore=z_ignore,
+        self.toggle_correction("system_flat", True)
+        # Perform flattening
+        iteration = 0
+        error = np.inf
+        modes = np.zeros(self.no_actuators)
+        itr_max_str = (
+            "Inf"
+            if params["iterations"] == np.inf
+            else int(params["iterations"])
         )
-
-        self.set_system_flat(sys_flat_values)
-
+        err_max_str = (
+            "Inf"
+            if params["error_threshold"] == np.inf
+            else f"{params['error_threshold']:.05f}"
+        )
+        while True:
+            # Update status light
+            events.publish(
+                events.UPDATE_STATUS_LIGHT,
+                "image count",
+                f"Flattening phase: iter. {iteration + 1}/{itr_max_str}, "
+                f"error {error:.05f}/{err_max_str}"
+            )
+            # Send modes and wait for them to take effect
+            self.set_correction("system_flat", modes)
+            self.refresh_corrections()
+            time.sleep(0.1)
+            # Get interferogram
+            phase = self.captureImage(camera, imager)
+            # Unwrap
+            phase_unwrapped = self.unwrap_phase(phase)
+            # Check for discontinuities
+            no_discontinuities = self._get_no_discontinuities(phase_unwrapped)
+            if no_discontinuities > np.prod(phase_unwrapped.shape) / 1000.0:
+                print(
+                    "Too many discontinuites in unwrapped phase. Aborting..."
+                )
+                break
+            # Calculate RMS error
+            error_current = self.calc_error_RMS(phase_unwrapped)
+            # Get Zernike modes and filter out modes that should be ignored
+            modes_measured = aoAlg.get_zernike_modes(
+                phase_unwrapped,
+                self.no_actuators
+            )
+            for mode_index in range(modes_measured.shape[0]):
+                if mode_index in params["modes_to_ignore"]:
+                    modes_measured[mode_index] = 0
+            # Update state variables
+            iteration += 1
+            if error_current < error:
+                modes += -modes_measured
+                error = error_current
+            # Check if exit conditions have been met
+            if (iteration >= params["iterations"]) or (
+                params["error_threshold"] < np.inf
+                and error <= params["error_threshold"]
+            ):
+                self.set_system_flat(modes)
+                break
         # Restore original corrections
         for key, value in original_corrections.items():
             self.toggle_correction(key, value["enabled"])
         self.refresh_corrections()
-
-        return sys_flat_values, best_z_amps_corrected
+        # Clear the status light
+        events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
 
     def reset(self):
         for key in self.get_corrections().keys():
@@ -782,76 +802,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 except Exception as e:
                     print("Failed to write: {}".format(datum[0]), e)
 
-    def getCamera(self):
-        cameras = depot.getActiveCameras()
-        
-        camera = None
-        if not cameras:
-            wx.MessageBox(
-                "There are no cameras enabled.", caption="No cameras active"
-            )
-        elif len(cameras) == 1:
-            camera = cameras[0]
-        else:
-            cameras_dict = dict([(camera.descriptiveName, camera) for camera in cameras])
-
-            dlg = wx.SingleChoiceDialog(
-                None, "Select camera", 'Camera', list(cameras_dict.keys()),
-            wx.CHOICEDLG_STYLE
-                )
-            if dlg.ShowModal() == wx.ID_OK:
-                camera = cameras_dict[dlg.GetStringSelection()]
-
-        return camera
-
-    def getImager(self):
-        imagers = depot.getHandlersOfType(depot.IMAGER)
-
-        imager = None
-        if not imagers:
-            wx.MessageBox(
-                "There are no available imagers.", caption="No imagers"
-            )
-        elif len(imagers) == 1:
-            imager = imagers[0]
-        else:
-            imagers_dict = dict([(imager.name, imager) for imager in imagers])
-
-            dlg = wx.SingleChoiceDialog(
-                None, "Select imager", 'Imager', list(imagers_dict.keys()),
-            wx.CHOICEDLG_STYLE
-                )
-            if dlg.ShowModal() == wx.ID_OK:
-                imager = imagers_dict[dlg.GetStringSelection()]
-        
-        return imager
-
-    def getStage(self, axis=2):
-        stages = depot.getSortedStageMovers()
-
-        stage = None
-
-        if axis not in stages.keys():
-            wx.MessageBox(
-                "There are no stages for axis {} enabled.".format(axis), caption="No stages with axis {} active".formaT(axis)
-            )
-
-            return None
-
-        if len(stages[axis]) == 1:
-            stage = stages[axis][0]
-        else:
-            stages_dict = dict((stage.name, stage) for stage in stages[axis])
-
-            dlg = wx.SingleChoiceDialog(
-                None, "Select stage", 'Stage', list(stages_dict.keys()),
-            wx.CHOICEDLG_STYLE
-                )
-            if dlg.ShowModal() == wx.ID_OK:
-                stage = stages_dict[dlg.GetStringSelection()]
-
-        return stage
-
     def captureImage(self, camera, imager, timeout=5.0):
         # Set capture method
         capture_method = imager.takeImage
@@ -872,12 +822,12 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         else:
             raise TimeoutError("Camera capture timed out")
 
-    def set_system_flat(self, values):
+    def set_system_flat(self, modes):
         # Set in cockpit user config
-        userConfig.setValue("dm_sys_flat", np.ndarray.tolist(values))
+        userConfig.setValue("dm_sys_flat", np.ndarray.tolist(modes))
 
-        # Set in device
-        self.proxy.set_system_flat(values)
+        # Set correction
+        self.set_correction("system_flat", modes)
 
     def get_corrections(self, include_default=False):
         return self.proxy.get_corrections(include_default)

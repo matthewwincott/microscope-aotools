@@ -1,5 +1,4 @@
 import os
-from functools import partial
 import glob
 import dataclasses
 import copy
@@ -14,10 +13,9 @@ import skimage.filters
 import skimage.measure
 import skimage.transform
 
-from cockpit import depot, events
-from cockpit.util import logger, userConfig, threads
+from cockpit import events
+from cockpit.util import userConfig, threads
 from microAO.gui.remoteFocus import RF_DATATYPES
-from microAO.gui.sensorlessViewer import SensorlessResultsViewer
 from microAO.events import *
 
 RF_DATATYPES = ["zernike", "actuator"]
@@ -407,24 +405,12 @@ class RemoteZ():
         # Ask the GUI thread to update the status light
         events.publish(PUBSUB_RF_CALIB_CACT_PROJ)
 
-    def zstack(self, zmin, zmax, zstepsize, camera=None, imager=None):
+    def zstack(self, zmin, zmax, zstepsize, camera, imager):
         zpositions = np.linspace(
             zmin,
             zmax,
             int((zmax - zmin) / zstepsize) + 1
         )
-
-        if camera is None:
-            camera = self._device.getCamera()
-        if imager is None:
-            imager = self._device.getImager()
-
-        if camera is None or imager is None:
-            logger.log.info(
-                f"Aborting because no camera or imager found. Camera: {camera}"
-                f". Imager: {imager}."
-            )
-            return
 
         images = []
 
