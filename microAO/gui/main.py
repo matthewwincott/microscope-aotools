@@ -954,10 +954,6 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         sysFlatCalcButton = wx.Button(panel_calibration, label="Generate system flat")
         sysFlatCalcButton.Bind(wx.EVT_BUTTON, self.OnCalcSystemFlat)
 
-        # Button to apply offset between phases
-        phaseOffsetButton = wx.Button(panel_calibration, label="Apply phase offset")
-        phaseOffsetButton.Bind(wx.EVT_BUTTON, self.OnPhaseOffset)
-
         # Reset the DM actuators
         resetButton = wx.Button(panel_AO, label="Reset DM")
         resetButton.Bind(wx.EVT_BUTTON, self.OnResetDM)
@@ -1012,8 +1008,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             calibrationCalcButton,
             characteriseButton,
             sysFlatParametersButton,
-            sysFlatCalcButton,
-            phaseOffsetButton
+            sysFlatCalcButton
         ]:
             sizer_calibration.Add(btn, panel_flags)
 
@@ -1226,112 +1221,6 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             "Zernike modes amplitudes corrected:\n %s", best_z_amps_corrected
         )
         logger.log.debug("System flat actuator values:\n%s", sys_flat_values)
-
-    def OnPhaseOffset(self, event: wx.CommandEvent) -> None:
-        # Naviage to the phase data file used as reference
-        file_path_input = None
-        with wx.FileDialog(
-            self,
-            message="Load phase data file",
-            wildcard="Numpy file (*.npy)|*.npy",
-            style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST
-        ) as file_dialog:
-            if file_dialog.ShowModal() != wx.ID_OK:
-                return
-            file_path_input = pathlib.Path(file_dialog.GetPath())
-        # Specify the location and base filename for the outputs
-        file_path_outputs = None
-        with wx.FileDialog(
-            self,
-            message="Save output files",
-            wildcard="Numpy file (*.npy)|*.npy",
-            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT
-        ) as file_dialog:
-            if file_dialog.ShowModal() != wx.ID_OK:
-                return
-            file_path_outputs = pathlib.Path(file_dialog.GetPath())
-        # Get the current unwrapped phase
-        _, phase_unwrapped, _ = self._get_image_and_unwrap()
-        # Load the reference unwrapped phase
-        phasedata = np.load(file_path_input, allow_pickle=True)
-        phase_unwrapped_ref = phasedata.item()["phase_unwrapped"]
-        # Subtract piston modes
-        phase_unwrapped = _subtractModesFromUnwrappedPhase(
-            phase_unwrapped,
-            (0,)
-        )
-        phase_unwrapped_ref = _subtractModesFromUnwrappedPhase(
-            phase_unwrapped_ref,
-            (0,)
-        )
-        # Calculate the difference
-        phase_unwrapped_difference = (
-            phase_unwrapped - phase_unwrapped_ref
-        )
-        # Set the phase difference map
-        actuators = self._device.set_phase_map(
-            -1.0 * phase_unwrapped_difference
-        )
-        # Check what the new phase looks like
-        _, phase_unwrapped_result, _ = self._get_image_and_unwrap()
-        phase_unwrapped_result = _subtractModesFromUnwrappedPhase(
-            phase_unwrapped_result,
-            (0,)
-        )
-        # Derive names for all the output files
-        file_path_phase = file_path_outputs.with_name(
-            file_path_outputs.stem + "_phase.npy"
-        )
-        file_path_phase_ref = file_path_outputs.with_name(
-            file_path_outputs.stem + "_phase-reference.npy"
-        )
-        file_path_phase_diff = file_path_outputs.with_name(
-            file_path_outputs.stem + "_phase-difference.npy"
-        )
-        file_path_phase_result = file_path_outputs.with_name(
-            file_path_outputs.stem + "_phase-result.npy"
-        )
-        file_path_actuators = file_path_outputs.with_name(
-            file_path_outputs.stem + "_actuators.txt"
-        )
-        # Write the output files
-        np.save(file_path_phase, phase_unwrapped)
-        np.save(file_path_phase_ref, phase_unwrapped_ref)
-        np.save(file_path_phase_diff, phase_unwrapped_difference)
-        np.save(file_path_phase_result, phase_unwrapped_result)
-        np.savetxt(file_path_actuators, actuators)
-        # Plot
-        fig, axes = matplotlib.pyplot.subplots(2, 2, figsize=(8.5, 7.3))
-        axes = axes.ravel()
-        for i, (img, title) in enumerate(
-            (
-                (
-                    phase_unwrapped_ref,
-                    "Reference phase without piston"
-                ),
-                (
-                    phase_unwrapped,
-                    "Current phase without piston"
-                ),
-                (
-                    phase_unwrapped_difference,
-                    "Difference between current\nand reference phases"
-                ),
-                (
-                    phase_unwrapped_result,
-                    "Current phase without piston,\n"
-                    "after applying the inverse of the difference"
-                )
-            )
-        ):
-            axes_image = axes[i].imshow(img)
-            axes[i].set_title(title)
-            axes[i].set_xticks([])
-            axes[i].set_yticks([])
-            axes[i].set_frame_on(False)
-            matplotlib.pyplot.colorbar(axes_image, ax=axes[i])
-        fig.tight_layout()
-        fig.show()
 
     def OnResetDM(self, event: wx.CommandEvent) -> None:
         del event

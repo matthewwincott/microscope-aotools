@@ -132,12 +132,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         }
         events.subscribe(events.USER_ABORT, self._on_abort)
 
-        # Excercise the DM to remove residual static and then set to 0 position
-        if self.config.get('exercise_on_startup', 'false').lower() in ['true', 't', 'yes', 'y', 1]:
-            for _ in range(50):
-                self.send(np.random.rand(self.no_actuators))
-                time.sleep(0.01)
-
         # Initialise sensorless data logging
         self._log_sensorless_data = False
         if self.config.get("log_sensorless_data", "false").lower() in ["true", "t", "yes", "y", 1]:
@@ -927,15 +921,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         events.publish(PUBSUB_SET_ACTUATORS, actuator_values)
 
         return actuator_values
-
-    def set_phase_map(self, phase_map):
-        # Convert the phase map to zernike coefficients
-        zernike_coeff = aoAlg.get_zernike_modes(
-            phase_map,
-            self.no_actuators
-        )
-        # Apply the zernike coefficients
-        return self.set_phase(zernike_coeff)
     
     def update_control_matrix(self, control_matrix):
         self.proxy.set_controlMatrix(control_matrix)
