@@ -17,9 +17,19 @@
 ## along with microAO.  If not, see <http://www.gnu.org/licenses/>.
 
 #Import required packs
+import dataclasses
 import numpy as np
 from scipy.signal import tukey
 from skimage.filters import threshold_otsu
+
+
+@dataclasses.dataclass(frozen=True)
+class DiagnosticsFourier:
+    fft_sq_log: np.ndarray
+    noise_mask: np.ndarray
+    noise_threshold: float
+    OTF_mask: np.ndarray
+
 
 def make_OTF_mask(size, inner_rad, outer_rad):
     rad_y = int(size[0] / 2)
@@ -60,7 +70,7 @@ def measure_fourier_metric(image, wavelength, NA, pixel_size, noise_amp_factor=1
     OTF_mask = make_OTF_mask(np.shape(image), 0.1 * OTF_outer_rad, OTF_outer_rad)
     freq_above_noise = (fftarray_sq_log > threshold) * OTF_mask
     metric = np.count_nonzero(freq_above_noise)
-    return metric
+    return metric, DiagnosticsFourier(fftarray_sq_log, noise_mask, threshold, OTF_mask)
 
 def measure_contrast_metric(image, no_intensities = 100, **kwargs):
     flattened_image = image.flatten()
@@ -70,7 +80,7 @@ def measure_contrast_metric(image, no_intensities = 100, **kwargs):
 
     mean_top = np.mean(flattened_image_list[-no_intensities:])
     mean_bottom = np.mean(flattened_image[:no_intensities])
-    return mean_top/mean_bottom
+    return mean_top/mean_bottom, None
 
 def measure_gradient_metric(image, **kwargs):
     image_gradient_x = np.gradient(image, axis=1)
@@ -82,7 +92,7 @@ def measure_gradient_metric(image, **kwargs):
     correction_grad = np.sqrt((image_gradient_x * grad_mask_x) ** 2 + (image_gradient_y * grad_mask_y) ** 2)
 
     metric = np.mean(correction_grad)
-    return metric
+    return metric, None
 
 
 def measure_fourier_power_metric(image, wavelength, NA, pixel_size, noise_amp_factor=1.125,
@@ -129,7 +139,7 @@ def measure_fourier_power_metric(image, wavelength, NA, pixel_size, noise_amp_fa
     OTF_mask = make_OTF_mask(np.shape(image), 0.1 * OTF_outer_rad, OTF_outer_rad)
     freq_above_noise = (fftarray_sq_log > threshold) * OTF_mask * high_f_amp_mask
     metric = np.sum(freq_above_noise)
-    return metric
+    return metric, None
 
 
 def measure_second_moment_metric(image, wavelength, NA, pixel_size, **kwargs):
@@ -168,4 +178,4 @@ def measure_second_moment_metric(image, wavelength, NA, pixel_size, **kwargs):
     omega = 1 - np.exp((dist/OTF_outer_rad)-1)
 
     metric = np.sum(ring_mask * fftarray_sq_log * ramp_mask * omega)/np.sum(fftarray_sq_log)
-    return metric
+    return metric, None

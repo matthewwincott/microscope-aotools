@@ -325,17 +325,14 @@ class AdaptiveOpticsFunctions():
 
         return actuator_pos
 
-    def measure_metric(self, image, **kwargs):
-        metric = metric_function[self.metric](image, **kwargs)
-        return metric
-
     def find_zernike_amp_sensorless(self, image_stack, modes, **kwargs):
         # Calculate metrics
         metrics = []
+        metric_diagnostics = []
         for image in image_stack:
-            metrics.append(
-                metric_function[self.metric](image, **kwargs)
-            )
+            metric, metric_diagnostic = metric_function[self.metric](image, **kwargs)
+            metrics.append(metric)
+            metric_diagnostics.append(metric_diagnostic)
         metrics = np.array(metrics)
         # Trivial case
         if metrics.shape[0] == 1:
@@ -380,7 +377,7 @@ class AdaptiveOpticsFunctions():
         peak_candidates = np.array(peak_candidates)
         # Find the peak and return it, together with the metrics
         peak_index = np.argmax(peak_candidates[:, 1])
-        return peak_candidates[peak_index], metrics
+        return peak_candidates[peak_index], metrics, metric_diagnostics
 
     def calc_phase_error_RMS(self, phase, modes_to_subtract=(0, 1, 2)):
         # NOTE: only works if modes_to_subtract is a contiguous subset of modes

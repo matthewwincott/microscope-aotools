@@ -1,64 +1,362 @@
 import dataclasses
 import json
+import time
 import numpy
 import wx
+import matplotlib.pyplot
 import matplotlib.ticker
 import matplotlib.figure
 import matplotlib.backends.backend_wxagg
 import matplotlib.backends.backend_wx
+import matplotlib.patches
+import tifffile
+import skimage.measure
 
 import cockpit
+import microAO.aoMetrics
 import microAO.events
 
 
+class _DiagnosticsPanelFourier(wx.Panel):
+    _DEFAULT_CMAP = "twilight_r"
+
+    def __init__(self, parent):
+        super().__init__(parent)
+
+        # Create figure
+        self._figure = matplotlib.figure.Figure(constrained_layout=True)
+        self._axes = None
+        self._canvas = matplotlib.backends.backend_wxagg.FigureCanvasWxAgg(
+            self, wx.ID_ANY, self._figure
+        )
+        toolbar = matplotlib.backends.backend_wx.NavigationToolbar2Wx(
+            self._canvas
+        )
+        toolbar.Show()
+
+        # Create widgets
+        stext_mode = wx.StaticText(self, label="Mode:")
+        self._slider_mode = wx.Slider(self, style=wx.SL_LABELS)
+        self._slider_mode.Bind(wx.EVT_SLIDER, self._on_slider_mode)
+        stext_meas = wx.StaticText(self, label="Measurement:")
+        self._slider_meas = wx.Slider(self, style=wx.SL_LABELS)
+        self._slider_meas.Bind(wx.EVT_SLIDER, self._on_slider_meas)
+        stext_noll_label = wx.StaticText(self, label="Noll index:")
+        self._stext_noll = wx.StaticText(self, label="")
+        stext_cmap = wx.StaticText(self, label="Colourmap:")
+        self._cmap_choice = wx.Choice(
+            self, choices=sorted(matplotlib.pyplot.colormaps())
+        )
+        self._cmap_choice.SetStringSelection(self._DEFAULT_CMAP)
+        self._cmap_choice.Bind(wx.EVT_CHOICE, self._on_cmap_choice)
+
+        # Lay out the widgets
+        widgets_sizer = wx.GridBagSizer(vgap=0, hgap=10)
+        widgets_sizer.SetCols(2)
+        widgets_sizer.AddGrowableCol(1)
+        widgets_sizer.Add(
+            stext_mode,
+            wx.GBPosition(0, 0),
+            wx.GBSpan(1, 1),
+            wx.ALIGN_CENTRE_VERTICAL | wx.ALL,
+            5,
+        )
+        widgets_sizer.Add(
+            self._slider_mode, wx.GBPosition(0, 1), wx.GBSpan(1, 1), wx.EXPAND
+        )
+        widgets_sizer.Add(
+            stext_meas,
+            wx.GBPosition(1, 0),
+            wx.GBSpan(1, 1),
+            wx.ALIGN_CENTRE_VERTICAL | wx.ALL,
+            5,
+        )
+        widgets_sizer.Add(
+            self._slider_meas, wx.GBPosition(1, 1), wx.GBSpan(1, 1), wx.EXPAND
+        )
+        widgets_sizer.Add(
+            stext_noll_label,
+            wx.GBPosition(2, 0),
+            wx.GBSpan(1, 1),
+            wx.ALIGN_CENTRE_VERTICAL | wx.ALL,
+            5,
+        )
+        widgets_sizer.Add(
+            self._stext_noll,
+            wx.GBPosition(2, 1),
+            wx.GBSpan(1, 1),
+            wx.ALIGN_CENTRE_VERTICAL | wx.ALIGN_LEFT,
+        )
+        widgets_sizer.Add(
+            stext_cmap,
+            wx.GBPosition(3, 0),
+            wx.GBSpan(1, 1),
+            wx.ALIGN_CENTRE_VERTICAL | wx.ALL,
+            5,
+        )
+        widgets_sizer.Add(
+            self._cmap_choice,
+            wx.GBPosition(3, 1),
+            wx.GBSpan(1, 1),
+            wx.ALIGN_CENTRE_VERTICAL | wx.ALIGN_LEFT,
+        )
+
+        # Finalise layout
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self._canvas, 1, wx.EXPAND)
+        sizer.Add(toolbar, 0, wx.EXPAND)
+        sizer.Add(widgets_sizer, 0, wx.EXPAND)
+        self.SetSizerAndFit(sizer)
+
+    def _update_plot(self):
+        index_mode = self._slider_mode.GetValue() - 1
+        index_meas = self._slider_meas.GetValue() - 1
+        diagnostics = (
+            self.GetParent()
+            .GetParent()
+            ._metric_diagnostics[index_mode][index_meas]
+        )
+        # Clear axes
+        self._axes.clear()
+        # Update image
+        self._axes.imshow(
+            diagnostics.fft_sq_log, cmap=self._cmap_choice.GetStringSelection()
+        )
+        self._axes.set_xticks([])
+        self._axes.set_yticks([])
+        self._axes.set_frame_on(False)
+        # Adjust noise mask circle
+        for contour in skimage.measure.find_contours(
+            diagnostics.noise_mask, 0
+        ):
+            artist_noise = self._axes.plot(
+                contour[:, 1], contour[:, 0], "-r", linewidth=2
+            )
+        # Draw OTF ring radii
+        for contour in skimage.measure.find_contours(diagnostics.OTF_mask, 0):
+            artist_otf = self._axes.plot(
+                contour[:, 1], contour[:, 0], "-g", linewidth=2
+            )
+        # Draw legend
+        self._axes.legend(
+            (artist_noise[0], artist_otf[0]),
+            ("noise mask", "OTF mask"),
+            loc="upper left",
+        )
+        # Update canvas
+        self._canvas.draw()
+
+    def _on_slider_mode(self, event: wx.CommandEvent):
+        mode_index = event.GetInt() - 1
+        current_diagnostics = (
+            self.GetParent().GetParent()._metric_diagnostics[mode_index]
+        )
+        current_data = self.GetParent().GetParent()._metric_data[mode_index]
+        # Update the measurement slider if necessary
+        new_meas_max = len(current_diagnostics)
+        if new_meas_max < self._slider_meas.GetValue():
+            # The new max value is less than the current value => clamp to max
+            self._slider_meas.SetValue(new_meas_max)
+        self._slider_meas.SetMax(new_meas_max)
+        # Update the Noll index
+        self._stext_noll.SetLabel(current_data.mode_label)
+        # Update the plot
+        self._update_plot()
+
+    def _on_slider_meas(self, _: wx.CommandEvent):
+        self._update_plot()
+
+    def _on_cmap_choice(self, _: wx.CommandEvent):
+        self._update_plot()
+
+    def initialise(self):
+        # Clear the figure and create axes
+        self._figure.clear()
+        self._axes = self._figure.add_subplot()
+        # Reset sliders
+        self._slider_mode.SetValue(1)
+        self._slider_mode.SetMin(1)
+        self._slider_mode.SetMax(1)
+        self._slider_meas.SetValue(1)
+        self._slider_meas.SetMin(1)
+        self._slider_meas.SetMax(1)
+
+    def update(self):
+        diagnostics = self.GetParent().GetParent()._metric_diagnostics
+        mode_index = self._slider_mode.GetValue() - 1
+        data = self.GetParent().GetParent()._metric_data[mode_index]
+        # Update the mode slider
+        self._slider_mode.SetMax(len(diagnostics))
+        # Update the measurement slider
+        self._slider_meas.SetMax(len(diagnostics[mode_index]))
+        # Update Noll index
+        self._stext_noll.SetLabel(data.mode_label)
+        # Update the plot
+        self._update_plot()
+
+
+class _DiagnosticsPanelNotImplemented(wx.Panel):
+    def initialise(self):
+        pass
+
+    def update(self):
+        pass
+
+
+_DIAGNOSTICS_PANEL_MAP = {
+    "fourier": _DiagnosticsPanelFourier,
+    "contrast": _DiagnosticsPanelNotImplemented,
+    "fourier_power": _DiagnosticsPanelNotImplemented,
+    "gradient": _DiagnosticsPanelNotImplemented,
+    "second_moment": _DiagnosticsPanelNotImplemented,
+}
+
+
 @dataclasses.dataclass(frozen=True)
-class SensorlessResultsData:
+class MetricPlotData:
+    peak: numpy.ndarray
     metrics: numpy.ndarray
     modes: numpy.ndarray
     mode_label: str
-    peak: numpy.ndarray
 
-class SensorlessResultsViewer(wx.Frame):
+
+class _MetricPlotPanel(wx.Panel):
     _MODE_SPACING_FRACTION = 0.5
 
     def __init__(self, parent):
-        super().__init__(parent, title="Metric viewer")
+        super().__init__(parent)
 
-        root_panel = wx.Panel(self)
-
-        # Instance attributes
-        self._data = []
         self._x_position = 0
         self._x_tick_positions = []
         self._x_tick_labels = []
         self._max_scan_range = 0
         self._margin_x = 0
 
-        # Add figure and canvas
         self._figure = matplotlib.figure.Figure(constrained_layout=True)
         self._axes = None
         self._canvas = matplotlib.backends.backend_wxagg.FigureCanvasWxAgg(
-            root_panel, wx.ID_ANY, self._figure
+            self, wx.ID_ANY, self._figure
         )
-
-        # Add a toolbar
         toolbar = matplotlib.backends.backend_wx.NavigationToolbar2Wx(
             self._canvas
         )
-        toolbar.Show()
+        save_images_button = wx.Button(self, label="Save raw images")
+        save_data_button = wx.Button(self, label="Save data")
 
-        # Add a button for saving of data
-        save_data_button = wx.Button(root_panel, label="Save data")
+        toolbar.Show()
+        save_images_button.Bind(wx.EVT_BUTTON, self._on_save_images)
         save_data_button.Bind(wx.EVT_BUTTON, self._on_save_data)
 
+        button_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        button_sizer.Add(save_images_button, 0)
+        button_sizer.Add(save_data_button, 0, wx.LEFT, 5)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self._canvas, 1, wx.EXPAND)
+        sizer.Add(toolbar, 0, wx.EXPAND)
+        sizer.Add(button_sizer, 0, wx.EXPAND | wx.ALL, 5)
+        self.SetSizerAndFit(sizer)
+
+    def _on_save_images(self, _: wx.CommandEvent):
+        self.GetParent().GetParent().save_images()
+
+    def _on_save_data(self, _: wx.CommandEvent):
+        self.GetParent().GetParent().save_data()
+
+    def initialise(self, max_scan_range):
+        # Clear figure
+        self._figure.clear()
+
+        # Initialise attributes
+        self._x_position = 0
+        self._x_tick_positions = []
+        self._x_tick_labels = []
+        self._max_scan_range = max_scan_range
+        self._margin_x = max_scan_range * self._MODE_SPACING_FRACTION
+
+        # Create axes and set their labels
+        self._axes = self._figure.add_subplot()
+        self._axes.set_xlabel("Mode")
+        self._axes.set_ylabel("Metric")
+
+    def update(self):
+        data = self.GetParent().GetParent()._metric_data[-1]
+        # Calculate parameters
+        x_range = (self._x_position, self._x_position + self._max_scan_range)
+
+        # Draw vertical line
+        if self._x_position > 0:
+            # This is not the first iteration
+            x_line = self._x_position - self._margin_x / 2
+            spine = list(self._axes.spines.values())[0]
+            self._axes.axvline(
+                x=x_line,
+                color=spine.get_edgecolor(),
+                linewidth=spine.get_linewidth(),
+            )
+
+        # Plot
+        self._axes.plot(
+            numpy.interp(
+                data.modes,
+                (min(data.modes), max(data.modes)),
+                x_range,
+            ),
+            data.metrics,
+            marker="o",
+            color="skyblue",
+        )
+        self._axes.plot(
+            numpy.interp(
+                data.peak[0],
+                (min(data.modes), max(data.modes)),
+                x_range,
+            ),
+            data.peak[1],
+            marker="+",
+            markersize=20,
+            color="crimson",
+        )
+
+        # Configure ticks
+        tick_position = x_range[0] + self._max_scan_range / 2
+        self._x_tick_positions += [tick_position]
+        self._x_tick_labels += [data.mode_label]
+        self._axes.xaxis.set_major_locator(
+            matplotlib.ticker.FixedLocator(self._x_tick_positions)
+        )
+        self._axes.xaxis.set_major_formatter(
+            matplotlib.ticker.FixedFormatter(self._x_tick_labels)
+        )
+
+        # Update x position
+        self._x_position = x_range[1] + self._margin_x
+
+        # Set x-axis limits
+        self._axes.set_xlim(
+            left=-self._margin_x / 2,
+            right=self._x_position - self._margin_x / 2,
+        )
+
+        # Refresh canvas
+        self._canvas.draw()
+
+
+class SensorlessResultsViewer(wx.Frame):
+    def __init__(self, parent):
+        super().__init__(parent, title="Metric viewer")
+
+        # Instance attributes
+        self._metric_images = []
+        self._metric_data = []
+        self._metric_diagnostics = []
+        self._metric_name = ""
+        self._metric_params = {}
+
+        self._notebook = wx.Notebook(self)
+
         # Sizing
-        root_panel_sizer = wx.BoxSizer(wx.VERTICAL)
-        root_panel_sizer.Add(self._canvas, 1, wx.EXPAND)
-        root_panel_sizer.Add(toolbar, 0, wx.EXPAND)
-        root_panel_sizer.Add(save_data_button, 0, wx.ALL, 5)
-        root_panel.SetSizerAndFit(root_panel_sizer)
         frame_sizer = wx.BoxSizer(wx.VERTICAL)
-        frame_sizer.Add(root_panel, 1, wx.EXPAND)
+        frame_sizer.Add(self._notebook, 1, wx.EXPAND)
         self.SetSizerAndFit(frame_sizer)
 
         # Subscribe to pubsub events
@@ -72,12 +370,36 @@ class SensorlessResultsViewer(wx.Frame):
         # Bind to close event
         self.Bind(wx.EVT_CLOSE, self._on_close)
 
-    def _on_save_data(self, evt: wx.CommandEvent):
+    def save_images(self):
         # Ask the user to select file
         fpath = None
         with wx.FileDialog(
             self,
-            "Save modes",
+            "Save image stack",
+            wildcard="TIFF file (*.tif; *.tiff)|*.tif;*.tiff",
+            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+        ) as fileDialog:
+            if fileDialog.ShowModal() != wx.ID_OK:
+                return
+            fpath = fileDialog.GetPath()
+        # Modes can have different scanning ranges and therefore it is not
+        # possible to order the images in a proper 2D array => save them as a
+        # linear sequence
+        images = numpy.array(
+            [
+                image
+                for image_stack in self._metric_images
+                for image in image_stack
+            ]
+        )
+        tifffile.imwrite(fpath, images)
+
+    def save_data(self):
+        # Ask the user to select file
+        fpath = None
+        with wx.FileDialog(
+            self,
+            "Save metric data",
             wildcard="JSON file (*.json)|*.json",
             style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
         ) as fileDialog:
@@ -86,93 +408,62 @@ class SensorlessResultsViewer(wx.Frame):
             fpath = fileDialog.GetPath()
         # Convert data to dicts and save them as JSON
         data_dicts = []
-        for data in self._data:
+        for data in self._metric_data:
             data_dict = dataclasses.asdict(data)
             for key in data_dict:
                 if isinstance(data_dict[key], numpy.ndarray):
                     data_dict[key] = data_dict[key].tolist()
             data_dicts.append(data_dict)
+        json_dict = {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "metric name": self._metric_name,
+            "metric parameters": self._metric_params,
+            "correction results": data_dicts,
+        }
         with open(fpath, "w", encoding="utf-8") as fo:
-            json.dump(data_dicts, fo, sort_keys=True, indent=4)
+            json.dump(json_dict, fo, sort_keys=True, indent=4)
 
-    def _on_start(self, max_scan_range):
-        self._figure.clear()
-        self._data = []
-        self._x_position = 0
-        self._x_tick_positions = []
-        self._x_tick_labels = []
-        self._max_scan_range = max_scan_range
-        self._margin_x = max_scan_range * self._MODE_SPACING_FRACTION
-        self._axes = self._figure.add_subplot()
-        self._axes.set_xlabel("Mode")
-        self._axes.set_ylabel("Metric")
+    def _on_start(self, max_scan_range, metric_name, metric_params):
+        # Clear attributes
+        self._metric_images = []
+        self._metric_data = []
+        self._metric_diagnostics = []
+        self._metric_name = metric_name
+        self._metric_params = metric_params
 
-    def _update(self, data: SensorlessResultsData):
-        # Calculate parameters
-        x_range = (
-            self._x_position,
-            self._x_position + self._max_scan_range
-        )
+        # Delete existing notebook pages
+        self._notebook.DeleteAllPages()
 
-        # Draw vertical line
-        if self._x_position > 0:
-            # This is not the first iteration
-            x_line = self._x_position - self._margin_x / 2
-            spine = list(self._axes.spines.values())[0]
-            self._axes.axvline(
-                x=x_line,
-                color=spine.get_edgecolor(),
-                linewidth=spine.get_linewidth()
-            )
-
-        # Plot
-        self._axes.plot(
-            numpy.interp(
-                data.modes,
-                (min(data.modes), max(data.modes)),
-                x_range,
+        # Add new notebook pages and initialise them
+        for panel_class, name, init_args in (
+            (_MetricPlotPanel, "Metric plot", (max_scan_range,)),
+            (
+                _DIAGNOSTICS_PANEL_MAP[self._metric_name],
+                "Metric diagnostics",
+                (),
             ),
-            data.metrics,
-            marker="o",
-            color="skyblue"
-        )
-        self._axes.plot(
-            numpy.interp(
-                data.peak[0],
-                (min(data.modes), max(data.modes)),
-                x_range,
-            ),
-            data.peak[1],
-            marker="+",
-            markersize=20,
-            color="crimson"
-        )
+        ):
+            panel = panel_class(self._notebook)
+            self._notebook.AddPage(panel, name)
+            panel.initialise(*init_args)
 
-        # Configure ticks
-        tick_position = x_range[0] + self._max_scan_range / 2
-        self._x_tick_positions += [tick_position]
-        self._x_tick_labels += [data.mode_label]
-        self._axes.xaxis.set_major_locator(
-            matplotlib.ticker.FixedLocator(self._x_tick_positions)
-        )
-        self._axes.xaxis.set_major_formatter(
-            matplotlib.ticker.FixedFormatter(self._x_tick_labels)
-        )
-        
-        # Update x position
-        self._x_position = x_range[1] + self._margin_x
+        # Re-fit the frame after the notebook has been updated
+        self.Fit()
 
-        # Set x-axis limits
-        self._axes.set_xlim(
-            left=-self._margin_x / 2,
-            right=self._x_position - self._margin_x / 2
-        )
-
-        # Refresh canvas
-        self._canvas.draw()
-
+    def _update(
+        self,
+        metric_images: list[numpy.ndarray],
+        metric_data: MetricPlotData,
+        metric_diagnostics: list[object],
+    ):
         # Save data
-        self._data.append(data)
+        self._metric_images.append(metric_images)
+        self._metric_data.append(metric_data)
+        self._metric_diagnostics.append(metric_diagnostics)
+
+        # Update pages
+        for page_id in range(self._notebook.GetPageCount()):
+            self._notebook.GetPage(page_id).update()
 
     def _on_close(self, evt: wx.CloseEvent):
         # Unsubscribe from events
