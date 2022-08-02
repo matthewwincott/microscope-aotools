@@ -1331,7 +1331,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         # Load calibration matrix from file, check format, and set on device
         try:
             control_matrix = np.loadtxt(fpath)
-            assert (control_matrix.ndim == 2 and control_matrix.shape[1] == self._device.no_actuators)
+            assert (control_matrix.ndim == 2 and control_matrix.shape[0] == self._device.no_actuators)
             self._device.proxy.set_controlMatrix(control_matrix)
 
             # Set control matrix in cockpit config
