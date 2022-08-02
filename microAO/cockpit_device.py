@@ -786,7 +786,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             modes=modes,
             **self.sensorless_data["metric_params"]
         )
-        self.sensorless_data["corrections"][mode_index_noll_0] = peak[0]
         # Signal sensorless results
         events.publish(
             PUBSUB_SENSORLESS_RESULTS,
@@ -799,6 +798,21 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             ),
             metric_diagnostics
         )
+
+        # If a peak isn't found, abort
+        if peak is None:
+            wx.MessageBox(
+                "Could not fit mode.", caption="Error fitting mode"
+            )
+            self.correctSensorlessAbort()
+
+            return
+
+        self.sensorless_data["corrections"][mode_index_noll_0] = peak[0]
+        self.sensorless_data["metrics_stack"].append(
+            metrics.tolist()
+        )
+
         # Update indices
         self.sensorless_data["offset_index"] = 0
         self.sensorless_data["mode_index"] += 1

@@ -326,6 +326,7 @@ class MetricPlotData:
     metrics: numpy.ndarray
     modes: numpy.ndarray
     mode_label: str
+    peak: numpy.ndarray = None
 
 
 class _MetricPlotPanel(wx.Panel):
@@ -413,17 +414,20 @@ class _MetricPlotPanel(wx.Panel):
             marker="o",
             color="skyblue",
         )
-        self._axes.plot(
-            numpy.interp(
-                data.peak[0],
-                (min(data.modes), max(data.modes)),
-                x_range,
-            ),
-            data.peak[1],
-            marker="+",
-            markersize=20,
-            color="crimson",
-        )
+
+        # Plot peak, if it has been found
+        if data.peak is not None:
+            self._axes.plot(
+                numpy.interp(
+                    data.peak[0],
+                    (min(data.modes), max(data.modes)),
+                    x_range,
+                ),
+                data.peak[1],
+                marker="+",
+                markersize=20,
+                color="crimson",
+            )
 
         # Configure ticks
         tick_position = x_range[0] + self._max_scan_range / 2
