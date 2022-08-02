@@ -1,4 +1,5 @@
 import dataclasses
+import typing
 import json
 import time
 import numpy
@@ -15,6 +16,7 @@ import skimage.measure
 import cockpit
 import microAO.aoMetrics
 import microAO.events
+from microAO.aoRoutines import ConventionalResults
 
 
 class _DiagnosticsPanelFourier(wx.Panel):
@@ -116,6 +118,7 @@ class _DiagnosticsPanelFourier(wx.Panel):
             .GetParent()
             ._metric_diagnostics[index_mode][index_meas]
         )
+
         # Clear axes
         self._axes.clear()
         # Update image
@@ -125,24 +128,34 @@ class _DiagnosticsPanelFourier(wx.Panel):
         self._axes.set_xticks([])
         self._axes.set_yticks([])
         self._axes.set_frame_on(False)
+
+        # Noise and OTF mask visualisation
+        artist_noise = None
+        artist_otf = None
+
         # Adjust noise mask circle
-        for contour in skimage.measure.find_contours(
+        contours_noise = skimage.measure.find_contours(
             diagnostics.noise_mask, 0
-        ):
+        )
+        for contour in contours_noise:
             artist_noise = self._axes.plot(
                 contour[:, 1], contour[:, 0], "-r", linewidth=2
             )
+
         # Draw OTF ring radii
-        for contour in skimage.measure.find_contours(diagnostics.OTF_mask, 0):
+        contours_otf = skimage.measure.find_contours(diagnostics.OTF_mask, 0)
+        for contour in contours_otf:
             artist_otf = self._axes.plot(
                 contour[:, 1], contour[:, 0], "-g", linewidth=2
             )
+
         # Draw legend
-        self._axes.legend(
-            (artist_noise[0], artist_otf[0]),
-            ("noise mask", "OTF mask"),
-            loc="upper left",
-        )
+        if artist_noise and artist_otf:
+            self._axes.legend(
+                (artist_noise[0], artist_otf[0]),
+                ("noise mask", "OTF mask"),
+                loc="upper left",
+            )
         # Update canvas
         self._canvas.draw()
 
@@ -211,17 +224,14 @@ _DIAGNOSTICS_PANEL_MAP = {
     "second_moment": _DiagnosticsPanelNotImplemented,
 }
 
-
 @dataclasses.dataclass(frozen=True)
 class MetricPlotData:
     peak: numpy.ndarray
     metrics: numpy.ndarray
     modes: numpy.ndarray
     mode_label: str
-    peak: numpy.ndarray = None
 
-
-class _MetricPlotPanel(wx.Panel):
+class MetricPlotPanel(wx.Panel):
     _MODE_SPACING_FRACTION = 0.5
 
     def __init__(self, parent):
@@ -344,8 +354,7 @@ class _MetricPlotPanel(wx.Panel):
         # Refresh canvas
         self._canvas.draw()
 
-
-class SensorlessResultsViewer(wx.Frame):
+class ConventionalResultsViewer(wx.Frame):
     def __init__(self, parent):
         super().__init__(parent, title="Metric viewer")
 
@@ -427,20 +436,35 @@ class SensorlessResultsViewer(wx.Frame):
         with open(fpath, "w", encoding="utf-8") as fo:
             json.dump(json_dict, fo, sort_keys=True, indent=4)
 
-    def _on_start(self, max_scan_range, metric_name, metric_params):
+    def _on_start(self, sensorless_params, sensorless_data):
+        # max_scan_range, metric_name, metric_params
+
         # Clear attributes
         self._metric_images = []
         self._metric_data = []
         self._metric_diagnostics = []
-        self._metric_name = metric_name
+        self._metric_name = sensorless_params["metric"]
+        metric_params = {
+            "wavelength": sensorless_params["wavelength"],
+            "NA": sensorless_params["NA"],
+            "pixel_size": sensorless_params["pixel_size"],
+        }
         self._metric_params = metric_params
+
+        # Calculate required parameters
+        max_scan_range = max(
+            [
+                mode.offsets.max() - mode.offsets.min()
+                for mode in sensorless_params["modes"]
+            ]
+        )
 
         # Delete existing notebook pages
         self._notebook.DeleteAllPages()
 
         # Add new notebook pages and initialise them
         for panel_class, name, init_args in (
-            (_MetricPlotPanel, "Metric plot", (max_scan_range,)),
+            (MetricPlotPanel, "Metric plot", (max_scan_range,)),
             (
                 _DIAGNOSTICS_PANEL_MAP[self._metric_name],
                 "Metric diagnostics",
@@ -456,14 +480,18 @@ class SensorlessResultsViewer(wx.Frame):
 
     def _update(
         self,
-        metric_images: list[numpy.ndarray],
-        metric_data: MetricPlotData,
-        metric_diagnostics: list[object],
+        results: ConventionalResults,
     ):
         # Save data
-        self._metric_images.append(metric_images)
-        self._metric_data.append(metric_data)
-        self._metric_diagnostics.append(metric_diagnostics)
+        self._metric_images.append(results.image_stack)
+        metric_plot_data = MetricPlotData(
+            peak = results.peak,
+            metrics = results.metrics,
+            modes = results.modes,
+            mode_label = results.mode_label
+        )
+        self._metric_data.append(metric_plot_data)
+        self._metric_diagnostics.append(results.metric_diagnostics)
 
         # Update pages
         for page_id in range(self._notebook.GetPageCount()):

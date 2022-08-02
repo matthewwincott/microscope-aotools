@@ -179,3 +179,19 @@ def measure_second_moment_metric(image, wavelength, NA, pixel_size, **kwargs):
 
     metric = np.sum(ring_mask * fftarray_sq_log * ramp_mask * omega)/np.sum(fftarray_sq_log)
     return metric, None
+
+metric_function = {
+    'fourier': measure_fourier_metric,
+    'contrast': measure_contrast_metric,
+    'fourier_power': measure_fourier_power_metric,
+    'gradient': measure_gradient_metric,
+    'second_moment': measure_second_moment_metric,
+}
+
+metric_names = dict([
+    ('fourier', "Fourier metric",),
+    ('contrast', "Contrast metric"),
+    ('fourier_power', "Fourier Power metric"),
+    ('gradient', "Gradient metric"),
+    ('second_moment', "Second Moment metric"),
+])

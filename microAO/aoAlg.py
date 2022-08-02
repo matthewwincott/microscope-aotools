@@ -19,6 +19,7 @@
 ## along with microAO.  If not, see <http://www.gnu.org/licenses/>.
 
 #Import required packs
+from abc import abstractmethod
 import numpy as np
 from scipy.ndimage.measurements import center_of_mass
 from scipy.signal import tukey
@@ -27,15 +28,8 @@ import aotools
 import scipy.stats as stats
 from skimage.restoration import unwrap_phase
 from scipy.integrate import trapz
-import microAO.aoMetrics as metrics
-
-metric_function = {
-    'fourier': metrics.measure_fourier_metric,
-    'contrast': metrics.measure_contrast_metric,
-    'fourier_power': metrics.measure_fourier_power_metric,
-    'gradient': metrics.measure_gradient_metric,
-    'second_moment': metrics.measure_second_moment_metric,
-}
+from microAO.aoMetrics import metric_function
+from microAO.events import *
 
 class AdaptiveOpticsFunctions():
 
@@ -56,16 +50,6 @@ class AdaptiveOpticsFunctions():
     def set_controlMatrix(self, controlMatrix):
         self.controlMatrix = controlMatrix
         return
-
-    def set_metric(self, metric):
-        if metric in metric_function.keys():
-            self.metric = metric
-        else:
-            raise Exception("Error: %s is not a supported image quality metric" %metric)
-        return
-
-    def get_metric(self):
-        return self.metric
 
     def make_mask(self, radius):
         diameter = radius * 2
@@ -325,12 +309,17 @@ class AdaptiveOpticsFunctions():
 
         return actuator_pos
 
-    def find_zernike_amp_sensorless(self, image_stack, modes, **kwargs):
+    def measure_metric(self, metric_name, image, **kwargs):
+        metric = metric_function[metric_name](image, **kwargs)
+        return metric
+    
+    @staticmethod
+    def find_zernike_amp_sensorless(image_stack, modes, metric_name, **kwargs):
         # Calculate metrics
         metrics = []
         metric_diagnostics = []
         for image in image_stack:
-            metric, metric_diagnostic = metric_function[self.metric](image, **kwargs)
+            metric, metric_diagnostic = metric_function[metric_name](image, **kwargs)
             metrics.append(metric)
             metric_diagnostics.append(metric_diagnostic)
         metrics = np.array(metrics)
@@ -342,22 +331,18 @@ class AdaptiveOpticsFunctions():
             indices_to_fit = [0, 1]
         else:
             max_metric_index = np.argmax(metrics)
-            indices_to_fit = np.array([
-                max_metric_index - 1,
-                max_metric_index,
-                max_metric_index + 1
-            ])
+            indices_to_fit = np.array(
+                [max_metric_index - 1, max_metric_index, max_metric_index + 1]
+            )
             # Handle edge cases
             if max_metric_index == 0:
-                 # Peak is at the left boundary => select two neighbours to the right
+                # Peak is at the left boundary => select two neighbours to the right
                 indices_to_fit += 1
             elif max_metric_index == metrics.shape[0] - 1:
                 # Peak is at the right boundary => select two neighbours to the left
-             indices_to_fit -= 1
+                indices_to_fit -= 1
         parabola = np.polynomial.Polynomial.fit(
-            modes[indices_to_fit],
-            metrics[indices_to_fit],
-            2
+            modes[indices_to_fit], metrics[indices_to_fit], 2
         )
         # Find the maxima of the parabola
         try:
@@ -366,7 +351,7 @@ class AdaptiveOpticsFunctions():
             # the boundaries
             peak_candidates = [
                 (modes[indices_to_fit[0]], metrics[indices_to_fit[0]]),
-                (modes[indices_to_fit[-1]], metrics[indices_to_fit[-1]])
+                (modes[indices_to_fit[-1]], metrics[indices_to_fit[-1]]),
             ]
             if (
                 parabola_maxima > peak_candidates[0][0]
@@ -382,7 +367,7 @@ class AdaptiveOpticsFunctions():
         except IndexError:
             peak = None
 
-        return peak, metrics
+        return peak, metrics, metric_diagnostics
 
     def calc_phase_error_RMS(self, phase, modes_to_subtract=(0, 1, 2)):
         # NOTE: only works if modes_to_subtract is a contiguous subset of modes

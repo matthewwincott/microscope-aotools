@@ -322,16 +322,6 @@ class AdaptiveOpticsDevice(Device):
                 self._wavefront_error_mode = self.wavefront_strehl_ratio
 
     @Pyro4.expose
-    def set_metric(self, metric):
-        aoAlg.set_metric(metric)
-
-    @Pyro4.expose
-    def get_metric(self):
-        metric = aoAlg.get_metric()
-        _logger.info("Current image quality metric is: %s" % metric)
-        return metric
-
-    @Pyro4.expose
     def get_system_flat(self):
         try:
             flat_correction = self.corrections.get('system_flat')
@@ -891,3 +881,8 @@ class AdaptiveOpticsDevice(Device):
             applied_z_modes[ii] = 0.0
         self.set_phase(np.zeros(modes_tba))
         return assay
+
+    @Pyro4.expose
+    def measure_metric(self, metric_name, image, **kwargs):
+        metric = aoAlg.measure_metric(metric_name, image, **kwargs)
+        return metric
