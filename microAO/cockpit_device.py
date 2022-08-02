@@ -178,7 +178,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Handle abort events
         self._abort = {
             "calib_data": False,
-            "calib_calc": False
+            "calib_calc": False,
+            "sensorless": False
         }
         events.subscribe(events.USER_ABORT, self._on_abort)
 
@@ -733,6 +734,11 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         wx.CallAfter(wx.GetApp().Imager.takeImage)
 
     def correctSensorlessImage(self, image, _):
+        # Check for abort flag and abort if set
+        if self._abort["sensorless"]:
+            self.correctSensorlessAbort()
+            return
+
         # Log the progress
         logger.log.info(
             "Correction image %i/%i"
@@ -864,6 +870,19 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Take image, but ensure it's called after the phase is applied
         time.sleep(0.1)
         wx.CallAfter(wx.GetApp().Imager.takeImage)
+
+    def correctSensorlessAbort(self):
+        logger.log.debug(
+            "Unsubscribing to camera %s events"
+            % self.sensorless_data["camera_name"]
+        )
+        events.unsubscribe(
+            events.NEW_IMAGE % self.sensorless_data["camera_name"],
+            self.correctSensorlessImage,
+        )
+        events.publish(events.UPDATE_STATUS_LIGHT, "image count", "")
+
+        self._abort["sensorless"] = False
 
     def _log_correction_applied(
         self,
