@@ -908,3 +908,8 @@ class AdaptiveOpticsDevice(Device):
             applied_z_modes[ii] = 0.0
         self.set_phase(np.zeros(modes_tba))
         return assay
+
+    @Pyro4.expose
+    def measure_metric(self, metric_name, image, **kwargs):
+        metric = aoAlg.measure_metric(metric_name, image, **kwargs)
+        return metric
