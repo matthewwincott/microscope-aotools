@@ -33,7 +33,9 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
     def __init__(self, parent, device):
         super().__init__(parent)
 
+        # Set attributes
         self._device = device
+        self._n_modes = self._device.proxy.get_controlMatrix().shape[1]
 
         # Create root panel and sizer
         sizer = wx.GridBagSizer()
@@ -57,7 +59,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         hbox = wx.BoxSizer(wx.HORIZONTAL)
         filter_modes_lbl = wx.StaticText(self, label="Mode filter:")
         self.filter_modes = microAO.gui.common.FilterModesCtrl(
-            self, value="{}-{}".format(1, self._device.no_actuators)
+            self, value="{}-{}".format(1, self._n_modes)
         )
         self.filter_modes.Bind(wx.EVT_TEXT, self._on_filter_modes)
         hbox.Add(filter_modes_lbl, 0)
@@ -110,8 +112,9 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
             )
 
         # Add control per mode
-        modes = np.zeros(self._device.no_actuators)
+        modes = np.zeros(self._n_modes)
         last_modes = self._device.proxy.get_last_modes()
+
         if last_modes is not None:
             modes += last_modes
         self._mode_controls = {}
@@ -409,7 +412,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
 
     def _apply_modes(self):
         modes = []
-        for i in range(self._device.no_actuators):
+        for i in range(self._n_modes):
             modes.append(self._mode_controls[i + 1][5].GetValue())
         self._device.set_correction("mode control", np.array(modes))
         if self._device.get_corrections()["mode control"]["enabled"]:
