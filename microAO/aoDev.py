@@ -334,13 +334,8 @@ class AdaptiveOpticsDevice(Device):
 
     @Pyro4.expose
     def get_system_flat(self):
-        try:
-            flat_correction = self.corrections.get('system_flat')
-            values = flat_correction['actuator_values']
-        except AttributeError:
-            values = None
-        
-        return values
+        flat_correction = self.corrections.get('system_flat', None)
+        return flat_correction
 
     # This method is used for AO elements such as DMs which have actuators which require direct signal values to be set.
     @Pyro4.expose

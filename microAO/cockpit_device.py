@@ -199,9 +199,19 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             pass
 
         try:
-            sys_flat = userConfig.getValue("dm_sys_flat")
-            if sys_flat is not None:
-                self.set_system_flat(np.asarray(sys_flat))
+            # Get flat modes
+            sys_flat_modes = userConfig.getValue("dm_sys_flat_modes", None)
+            if sys_flat_modes is not None:
+                sys_flat_modes = np.asarray(sys_flat_modes)
+
+            # Get flat actuators
+            sys_flat_actuators = userConfig.getValue("dm_sys_flat_actuators", None)
+            if sys_flat_actuators is not None:
+                sys_flat_actuators = np.asarray(sys_flat_actuators)
+
+            # Set flat, if found
+            if sys_flat_modes is not None or sys_flat_actuators is not None:
+                self.set_system_flat(sys_flat_modes, sys_flat_actuators)
         except Exception:
             pass
         # Initialise the sensorless and remote focus corrections, as well as
@@ -849,12 +859,16 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         else:
             raise TimeoutError("Camera capture timed out")
 
-    def set_system_flat(self, modes):
+    def set_system_flat(self, modes=None, actuator_values=None):
         # Set in cockpit user config
-        userConfig.setValue("dm_sys_flat", np.ndarray.tolist(modes))
+        modes_config = np.ndarray.tolist(modes) if modes is not None else None
+        actuators_config = np.ndarray.tolist(actuator_values) if actuator_values is not None else None
+    
+        userConfig.setValue("dm_sys_flat_modes", modes_config)
+        userConfig.setValue("dm_sys_flat_actuators", actuators_config)
 
         # Set correction
-        self.set_correction("system_flat", modes)
+        self.set_correction("system_flat", modes, actuator_values)
 
     def get_corrections(self, include_default=False):
         return self.proxy.get_corrections(include_default)
