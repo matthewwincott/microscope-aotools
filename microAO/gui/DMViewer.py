@@ -175,15 +175,15 @@ class _ColourBar(wx.Panel):
 
 
 class DMViewer(wx.Frame):
-    def __init__(self, parent, device, dm_layout_name='alpao69', actuator_scale=None, *args, **kwargs):
+    def __init__(self, parent, device, dm_layout_name=None, actuator_scale=None, *args, **kwargs):
         super().__init__(parent, title="DM viewer")
         self._panel = wx.Panel(self, *args, **kwargs)
 
+        # Store reference to the DM
         self._device = device
 
-        # Load DM layout from file
+        # Set up DM layout
         dm_layout = microAO.dm_layouts.get_layout(dm_layout_name)
-
         actuators = dm_layout['locations']
         actuator_scale = dm_layout['scale_shapes']
 

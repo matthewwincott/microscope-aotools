@@ -1261,7 +1261,15 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
 
         # If not found, create new window and save reference to its id
         if window is None:
-            window = DMViewer(self, self._device)
+            # Get the DM layout from the device
+            dm_layout_name = self._device.proxy.get_dm_layout()
+            if not dm_layout_name:
+                message = "DM layout not set.\nPlease add \'dm_layout\' to the device config"
+                logger.log.error(message)
+                wx.MessageBox(message, caption='Error')
+                return
+
+            window = DMViewer(self, self._device, dm_layout_name=dm_layout_name)
             self._components["dm_view"] = window.GetId()
 
             actuator_values = self._device.proxy.get_last_actuator_values()

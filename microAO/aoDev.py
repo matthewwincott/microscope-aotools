@@ -73,7 +73,7 @@ class AdaptiveOpticsDevice(Device):
 
 
     def __init__(
-        self, ao_element_uri, wavefront_uri=None, slm_uri=None, control_matrix=None, system_flat=None, saturation_limits=(0.1, 0.9), **kwargs
+        self, ao_element_uri, wavefront_uri=None, slm_uri=None, dm_layout=None, control_matrix=None, system_flat=None, saturation_limits=(0.1, 0.9), **kwargs
     ):
         # Init will fail if devices it depends on aren't already running, but
         # deviceserver should retry automatically.
@@ -119,6 +119,8 @@ class AdaptiveOpticsDevice(Device):
             self.set_controlMatrix(control_matrix)
         else:
             self.controlMatrix = None
+        # Store DM layout
+        self.dm_layout = dm_layout
         # Store corrections as zernike modes/actuator values.
         # The sum of these are applied optionally to device.
         self.corrections = {}
@@ -274,6 +276,10 @@ class AdaptiveOpticsDevice(Device):
     @Pyro4.expose
     def get_n_actuators(self):
         return self.numActuators
+
+    @Pyro4.expose
+    def get_dm_layout(self):
+        return self.dm_layout
 
     @Pyro4.expose
     def set_pupil_ac(self, pupil_ac):
