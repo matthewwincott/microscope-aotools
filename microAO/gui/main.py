@@ -19,6 +19,7 @@ import microscope.devices
 import wx
 from wx.lib.floatcanvas.FloatCanvas import FloatCanvas
 import wx.lib.floatcanvas.FCObjects as FCObjects
+from wx.lib.filebrowsebutton import FileBrowseButton
 
 import matplotlib.pyplot
 import matplotlib.ticker
@@ -450,6 +451,51 @@ class _CharacterisationAssayViewer(wx.Frame):
                 return
             file_path = file_dialog.GetPath()
         np.save(file_path, self._assay)
+
+class _DMFlatLoaderSaver(wx.Dialog):
+    def __init__(self, parent, title="") -> None:
+        super().__init__(
+            parent,
+            title=title,
+            style= wx.DEFAULT_FRAME_STYLE | wx.OK |  wx.RESIZE_BORDER
+        )
+
+        # Selector for modes or actuator values
+        self._type_lookup = {
+            'modes': 'Modes',
+            'actuator_values': 'Actuator values'
+        }
+        type_choices = list(self._type_lookup.values())
+        self._type = wx.ComboBox(self, value=type_choices[0], choices=type_choices, style=wx.CB_READONLY)
+
+        # Filepath to load
+        self._filepath = FileBrowseButton(self, labelText="Filepath")
+
+        # Add standard buttons
+        sizer_buttons = wx.StdDialogButtonSizer()
+        for button_id in (wx.ID_OK, wx.ID_CANCEL):
+            button = wx.Button(self, button_id)
+            sizer_buttons.Add(button)
+        sizer_buttons.Realize()
+
+        # Layout
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self._type)
+        sizer.Add(self._filepath)
+        sizer.Add(sizer_buttons, 0, wx.ALIGN_CENTRE)
+
+        self.SetSizerAndFit(sizer)
+
+    def GetPath(self):
+        fpath = self._filepath.GetValue()
+        print('fpath', fpath)
+        return fpath
+
+    def GetType(self):
+        type_name = self._type.GetValue()
+        type = next(key for key, value in self._type_lookup.items() if value == type_name)
+        return type
+
 
 class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def __init__(self, parent, device):
@@ -969,19 +1015,31 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def OnLoadFlat(self, event: wx.CommandEvent) -> None:
         del event
 
-        # Prompt for file to load
-        with wx.FileDialog(self, "Load DM flat values", wildcard="Flat data (*.txt)|*.txt", style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
-            if fileDialog.ShowModal() != wx.ID_OK:
+        # Show loader dialog and get filepath + flat type
+        with _DMFlatLoaderSaver(self, title="Load DM flat") as dlg:
+            if dlg.ShowModal() == wx.ID_OK:
+                flat_path = dlg.GetPath()
+                flat_type = dlg.GetType()
+
+                # Return if no file selected
+                if not flat_path:
+                    message = ('Error loading flat file.')
+                    wx.MessageBox(message, caption='No file selected')
+                    return
+            else:
                 return
-            fpath = fileDialog.GetPath()
 
         try:
             # Load flat values from file and check format
-            new_flat = np.loadtxt(fpath)
+            new_flat = np.loadtxt(flat_path)
             assert new_flat.ndim == 1
 
             # Set new flat and refresh corrections
-            self._device.set_system_flat(new_flat)
+            if flat_type == 'modes':
+                self._device.set_system_flat(modes=new_flat)
+            elif flat_type == 'actuator_values':
+                self._device.set_system_flat(actuator_values=new_flat)
+
             self._device.refresh_corrections()
 
             # Log
@@ -993,22 +1051,38 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             wx.MessageBox(message, caption='Error')
 
     def OnSaveFlat(self, event: wx.CommandEvent) -> None:
-        # Prompt for file to load
-        with wx.FileDialog(self, "Save DM flat values", wildcard="Flat data (*.txt)|*.txt",
-                           style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
-            if fileDialog.ShowModal() != wx.ID_OK:
+        del event
+
+        # Show loader dialog and get filepath + flat type
+        with _DMFlatLoaderSaver(self, title="Load DM flat") as dlg:
+            if dlg.ShowModal() == wx.ID_OK:
+                flat_path = dlg.GetPath()
+                flat_type = dlg.GetType()
+
+                # Return if no file selected
+                if not flat_path:
+                    message = ('Error loading flat file.')
+                    wx.MessageBox(message, caption='No file selected')
+                    return
+            else:
                 return
-            
-            fpath = fileDialog.GetPath()
 
-        # Get flat values from device and save to file
         try:
-            values = self._device.proxy.get_system_flat()
-            np.savetxt(fpath, values)
-        except:
-            logger.log.error("Failed to save DM flat value data")
+            flat_correction = self._device.proxy.get_system_flat()
 
-        logger.log.info("Saved DM flat data to file {}".format(fpath))
+            if flat_correction is None:
+                return
+
+            flat = flat_correction.get(flat_type, None)
+            
+            if flat is not None:
+                np.savetxt(flat_path, flat)
+
+        except Exception as e:
+            message = ('Error saving flat file.')
+            logger.log.error(message)
+            wx.MessageBox(message, caption='Error')
+
 
     def OnLoadActuatorValues(self, event: wx.CommandEvent) -> None:
         del event
@@ -1189,9 +1263,9 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         window.Raise()           
     
     def OnSetCurrentAsFlat(self, event: wx.CommandEvent) -> None:
-        """ Sets current actuator values as the new flat """
-        modes, _ = self._device.sum_corrections()
-        self._device.set_system_flat(modes)
+        """ Sets current DM state as the new flat """
+        modes, actuator_values = self._device.sum_corrections()
+        self._device.set_system_flat(modes, actuator_values)
 
     def OnTriggerTypeChoice(self, event: wx.CommandEvent):
         try:
