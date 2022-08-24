@@ -224,7 +224,73 @@ class ConventionalRoutine(Routine):
         )
 
         return status_message
+class MLRoutine(Routine):
+    def name():
+        return "ML"
+
+    @staticmethod
+    def defaults():
+        parameters = {
+        }
+
+        return parameters
+
+    def setup(self, sensorless_data):
+        # Define additional data required for routine
+        additional_data = {
+            "image_index": 0,
+        }
+
+        # Merge additional data (note in-place merge of mutable dict)
+        sensorless_data.update(additional_data)
+
+        # Define the first correction to apply
+        new_modes = sensorless_data["corrections"].copy()
+
+        # Update status message
+        status_message = "I\'ve started"
+
+        # Format return data
+        return_data = RoutineOutput(
+            sensorless_data = sensorless_data,
+            status = status_message,
+            new_modes = new_modes,
+        )
+
+        return return_data
+
+    def process(self, sensorless_data):
+        return_data = {}
+
+        # Set default result
+        result = None
+
+        # Image transforms
+        print('sensorless_params', self.sensorless_params)
+        print('sensorles_data', sensorless_data)
+
+        # new_modes = model.predict()
+
+        # Update status message
+        status_message = "I'm running"
+
+        sensorless_data['image_index']  += 1
+
+        # Format return data
+        return_data = RoutineOutput(
+            sensorless_data = sensorless_data,
+            status = status_message,
+            result = result,
+            new_modes = np.zeros(52)
+        )
+
+        # If all data acquired, set completion flag
+        if sensorless_data['image_index'] >= 5:
+            return_data.done = True
+
+        return return_data
 
 routines = {
     'conventional': ConventionalRoutine,
+    'ml': MLRoutine
 }
