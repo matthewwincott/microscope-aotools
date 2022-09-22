@@ -644,42 +644,42 @@ class _SensorlessParametersDialog(wx.Dialog):
             try:
                 widget_data[2] = widget_data[3](widget_data[0].GetValue())
             except ValueError:
-                dlg = wx.MessageDialog(
+                with wx.MessageDialog(
                     self,
                     f"Error! Cannot convert {widget_data[1]} to a number of "
                     f"type {widget_data[3].__name__}!",
                     "Parsing error",
                     wx.OK | wx.ICON_ERROR,
-                )
-                dlg.ShowModal()
+                ) as dlg:
+                    dlg.ShowModal()
                 return
         # Do widget-specific parsing for each of the single-line widgets
         if widgets_data[0][2] < 1:
-            dlg = wx.MessageDialog(
+            with wx.MessageDialog(
                 self,
                 f"Error! Repeats must be 1 or greater!",
                 "Parsing error",
                 wx.OK | wx.ICON_ERROR,
-            )
-            dlg.ShowModal()
+            ) as dlg:
+                dlg.ShowModal()
             return
         if widgets_data[1][2] <= 0.0:
-            dlg = wx.MessageDialog(
+            with wx.MessageDialog(
                 self,
                 f"Error! Numerical aperture must be greater than 0.0!",
                 "Parsing error",
                 wx.OK | wx.ICON_ERROR,
-            )
-            dlg.ShowModal()
+            ) as dlg:
+                dlg.ShowModal()
             return
         if widgets_data[2][2] <= 0:
-            dlg = wx.MessageDialog(
+            with wx.MessageDialog(
                 self,
                 f"Error! Wavelength must be greater than 0!",
                 "Parsing error",
                 wx.OK | wx.ICON_ERROR,
-            )
-            dlg.ShowModal()
+            ) as dlg:
+                dlg.ShowModal()
             return
         # Parse the multi-line widget
         mode_params = []
@@ -689,28 +689,28 @@ class _SensorlessParametersDialog(wx.Dialog):
         ]
         lines = [line for line in lines if line]
         if len(lines) == 0:
-            dlg = wx.MessageDialog(
+            with wx.MessageDialog(
                 self,
                 f"Error! At least one scanning range needs to be defined!",
                 "Parsing error",
                 wx.OK | wx.ICON_ERROR,
-            )
-            dlg.ShowModal()
+            ) as dlg:
+                dlg.ShowModal()
             return
         for line_index, line in enumerate(lines):
             columns = [column.strip() for column in line.split("    ")]
             columns = [column for column in columns if column]
             # Parse number of columns
             if len(columns) != 4:
-                dlg = wx.MessageDialog(
+                with wx.MessageDialog(
                     self,
                     f"Error! Improper formatting on line {line_index + 1} of "
                     f"scan ranges! Expected 4 column but got {len(columns)} "
                     "instead.",
                     "Parsing error",
                     wx.OK | wx.ICON_ERROR,
-                )
-                dlg.ShowModal()
+                ) as dlg:
+                    dlg.ShowModal()
                 return
             # Parse modes
             modes = []
@@ -720,46 +720,46 @@ class _SensorlessParametersDialog(wx.Dialog):
                 if "-" in mode_range:
                     bounds = [x.strip() for x in mode_range.split("-")]
                     if len(bounds) != 2:
-                        dlg = wx.MessageDialog(
+                        with wx.MessageDialog(
                             self,
                             "Error! Improper formatting of modes on line "
                             f"{line_index + 1} of scan ranges!",
                             "Parsing error",
                             wx.OK | wx.ICON_ERROR,
-                        )
-                        dlg.ShowModal()
+                        ) as dlg:
+                            dlg.ShowModal()
                         return
                     try:
                         range_start = int(bounds[0])
                         range_end = int(bounds[1]) + 1
                         modes.extend(list(range(range_start, range_end)))
                     except TypeError:
-                        dlg = wx.MessageDialog(
+                        with wx.MessageDialog(
                             self,
                             "Error! Improper formatting of modes on line "
                             f"{line_index + 1} of scan ranges! Modes need to "
                             "be integers.",
                             "Parsing error",
                             wx.OK | wx.ICON_ERROR,
-                        )
-                        dlg.ShowModal()
+                        ) as dlg:
+                            dlg.ShowModal()
                         return
                 else:
                     try:
                         modes.append(int(mode_range))
                     except ValueError:
-                        dlg = wx.MessageDialog(
+                        with wx.MessageDialog(
                             self,
                             "Error! Improper formatting of modes on line "
                             f"{line_index + 1} of scan ranges! Modes need to "
                             "be integers.",
                             "Parsing error",
                             wx.OK | wx.ICON_ERROR,
-                        )
-                        dlg.ShowModal()
+                        ) as dlg:
+                            dlg.ShowModal()
                         return
             if min(modes) <= 0:
-                dlg = wx.MessageDialog(
+                with wx.MessageDialog(
                     self,
                     "Error! Improper formatting of modes on line "
                     f"{line_index + 1} of scan ranges! Modes need to be "
@@ -767,35 +767,35 @@ class _SensorlessParametersDialog(wx.Dialog):
                     "than 0.",
                     "Parsing error",
                     wx.OK | wx.ICON_ERROR,
-                )
-                dlg.ShowModal()
+                ) as dlg:
+                    dlg.ShowModal()
                 return
             # Parse range bounds
             for index, label in ((1, "range min"), (2, "range max")):
                 try:
                     columns[index] = float(columns[index])
                 except ValueError:
-                    dlg = wx.MessageDialog(
+                    with wx.MessageDialog(
                         self,
                         f"Error! Cannot convert {label} on line "
                         f"{line_index + 1} to a floating-point number!",
                         "Parsing error",
                         wx.OK | wx.ICON_ERROR,
-                    )
-                    dlg.ShowModal()
+                    ) as dlg:
+                        dlg.ShowModal()
                     return
             # Parse steps
             try:
                 columns[3] = int(columns[3])
             except ValueError:
-                dlg = wx.MessageDialog(
+                with wx.MessageDialog(
                     self,
                     f"Error! Cannot convert steps on line {line_index + 1} to "
                     "an integer number!",
                     "Parsing error",
                     wx.OK | wx.ICON_ERROR,
-                )
-                dlg.ShowModal()
+                ) as dlg:
+                    dlg.ShowModal()
                 return
             # Create the mode parameters
             for mode in modes:
@@ -1499,21 +1499,21 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             ("Second Moment metric", "second_moment"),
         ])
 
-        dlg = wx.SingleChoiceDialog(
-            self, "Select metric", "Metric", list(metrics.keys()),
-        wx.CHOICEDLG_STYLE
-            )
-        if dlg.ShowModal() == wx.ID_OK:
-            metric = metrics[dlg.GetStringSelection()]
-            self._device.proxy.set_metric(metric)
-
-            logger.log.info("Set sensorless AO metric to: {}".format(metric))
-        
-        dlg.Destroy()
+        with wx.SingleChoiceDialog(
+            self,
+            "Select metric",
+            "Metric",
+            list(metrics.keys()),
+            wx.CHOICEDLG_STYLE
+        ) as dlg:
+            if dlg.ShowModal() == wx.ID_OK:
+                metric = metrics[dlg.GetStringSelection()]
+                self._device.proxy.set_metric(metric)
+                logger.log.info(f"Set sensorless AO metric to: {metric}")
 
     def OnSetSensorlessParameters(self, _) -> None:
-        dlg = _SensorlessParametersDialog(self)
-        dlg.ShowModal()
+        with _SensorlessParametersDialog(self) as dlg:
+            dlg.ShowModal()
 
     def OnDMViewer(self, event: wx.CommandEvent) -> None:
         # Try to find DM viewer window
@@ -1642,12 +1642,15 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         else:
             cameras_dict = dict([(camera.descriptiveName, camera) for camera in cameras])
 
-            dlg = wx.SingleChoiceDialog(
-                None, "Select camera", 'Camera', list(cameras_dict.keys()),
-            wx.CHOICEDLG_STYLE
-                )
-            if dlg.ShowModal() == wx.ID_OK:
-                camera = cameras_dict[dlg.GetStringSelection()]
+            with wx.SingleChoiceDialog(
+                None,
+                "Select camera",
+                "Camera",
+                list(cameras_dict.keys()),
+                wx.CHOICEDLG_STYLE
+            ) as dlg:
+                if dlg.ShowModal() == wx.ID_OK:
+                    camera = cameras_dict[dlg.GetStringSelection()]
 
         return camera
 
@@ -1664,12 +1667,15 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         else:
             imagers_dict = dict([(imager.name, imager) for imager in imagers])
 
-            dlg = wx.SingleChoiceDialog(
-                None, "Select imager", 'Imager', list(imagers_dict.keys()),
-            wx.CHOICEDLG_STYLE
-                )
-            if dlg.ShowModal() == wx.ID_OK:
-                imager = imagers_dict[dlg.GetStringSelection()]
+            with wx.SingleChoiceDialog(
+                None,
+                "Select imager",
+                "Imager",
+                list(imagers_dict.keys()),
+                wx.CHOICEDLG_STYLE
+            ) as dlg:
+                if dlg.ShowModal() == wx.ID_OK:
+                    imager = imagers_dict[dlg.GetStringSelection()]
 
         return imager
 
@@ -1690,11 +1696,14 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         else:
             stages_dict = dict((stage.name, stage) for stage in stages[axis])
 
-            dlg = wx.SingleChoiceDialog(
-                None, "Select stage", 'Stage', list(stages_dict.keys()),
-            wx.CHOICEDLG_STYLE
-                )
-            if dlg.ShowModal() == wx.ID_OK:
-                stage = stages_dict[dlg.GetStringSelection()]
+            with wx.SingleChoiceDialog(
+                None,
+                "Select stage",
+                "Stage",
+                list(stages_dict.keys()),
+                wx.CHOICEDLG_STYLE
+            ) as dlg:
+                if dlg.ShowModal() == wx.ID_OK:
+                    stage = stages_dict[dlg.GetStringSelection()]
 
         return stage

@@ -329,7 +329,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         if new_amplitude < max_mode_value:
             # Restore the last amplitude, raise a warning message, and exit
             self._amplitude.ChangeValue(str(last_amplitude))
-            wx.MessageDialog(
+            with wx.MessageDialog(
                 self,
                 message=(
                     "Failed to set amplitude because the requested value "
@@ -337,7 +337,8 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
                     f"{max_mode_number}: {max_mode_value}."
                 ),
                 style=wx.ICON_EXCLAMATION | wx.STAY_ON_TOP | wx.OK,
-            ).ShowModal()
+            ) as dlg:
+                dlg.ShowModal()
             event.Skip()
             return
         # Update all modes' controls
