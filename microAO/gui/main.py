@@ -1,6 +1,6 @@
 from microAO.gui import *
 from microAO.gui.modeControl import ModesControl
-from microAO.gui.remoteFocus import RemoteFocusControl
+from microAO.gui.correctionFitting import CorrectionFittingFrame
 from microAO.gui.sensorlessViewer import SensorlessResultsViewer
 from microAO.gui.DMViewer import DMViewer
 from microAO import cockpit_device
@@ -11,6 +11,7 @@ import cockpit.gui.device
 import cockpit.gui.camera.window
 from cockpit.util import logger, userConfig
 from cockpit import depot
+import cockpit.interfaces.stageMover
 
 import microscope.devices
 
@@ -461,7 +462,7 @@ class _SensorlessParametersDialog(wx.Dialog):
 
         panel = wx.Panel(self)
 
-        # Create the text controls
+        # Create the configurable controls
         params = self._device.sensorless_params
         self._textctrl_reps = wx.TextCtrl(panel, value=str(params["num_reps"]))
         self._textctrl_na = wx.TextCtrl(panel, value=str(params["NA"]))
@@ -475,6 +476,8 @@ class _SensorlessParametersDialog(wx.Dialog):
             size=wx.Size(400, 200),
             style=wx.TE_MULTILINE,
         )
+        self._checkbox_dp_save = wx.CheckBox(panel)
+        self._checkbox_dp_save.SetValue(params["save_as_datapoint"])
 
         # Configure the font of the scan ranges' text control
         self._textctrl_ranges.SetFont(
@@ -531,6 +534,20 @@ class _SensorlessParametersDialog(wx.Dialog):
                 5
             ),
             (
+                wx.StaticText(panel, label="Save results as datapoint?"),
+                wx.GBPosition(3, 0),
+                wx.GBSpan(1, 1),
+                wx.ALL,
+                5
+            ),
+            (
+                self._checkbox_dp_save,
+                wx.GBPosition(3, 1),
+                wx.GBSpan(1, 1),
+                wx.ALL,
+                5
+            ),
+            (
                 wx.StaticText(
                     panel,
                     label=(
@@ -541,14 +558,14 @@ class _SensorlessParametersDialog(wx.Dialog):
                         "amplitude\n\tScan range steps"
                     )
                 ),
-                wx.GBPosition(3, 0),
+                wx.GBPosition(4, 0),
                 wx.GBSpan(1, 2),
                 wx.ALL,
                 5
             ),
             (
                 self._textctrl_ranges,
-                wx.GBPosition(4, 0),
+                wx.GBPosition(5, 0),
                 wx.GBSpan(1, 2),
                 wx.ALL | wx.EXPAND,
                 5
@@ -809,6 +826,9 @@ class _SensorlessParametersDialog(wx.Dialog):
         self._device.sensorless_params["modes"] = mode_params
         self._device.sensorless_params["NA"] = widgets_data[1][2]
         self._device.sensorless_params["wavelength"] = widgets_data[2][2]
+        self._device.sensorless_params["save_as_datapoint"] = (
+            self._checkbox_dp_save.GetValue()
+        )
         # Propagate event
         event.Skip()
 
@@ -960,8 +980,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         DMViewButton.Bind(wx.EVT_BUTTON, self.OnDMViewer)
 
         # Button to show remote focus dialog
-        RemoteFocusButton = wx.Button(panel_AO, label="Remote focus")
-        RemoteFocusButton.Bind(wx.EVT_BUTTON, self.OnRemoteFocus)
+        correctionFittingButton = wx.Button(panel_AO, label="Correction fitting")
+        correctionFittingButton.Bind(wx.EVT_BUTTON, self.OnCorrectionFitting)
 
         panel_flags = wx.SizerFlags(0).Expand().Border(wx.LEFT|wx.RIGHT, 50)
 
@@ -996,7 +1016,7 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             metricSelectButton,
             sensorlessParametersButton,
             sensorlessAOButton,
-            RemoteFocusButton
+            correctionFittingButton
         ]:
             sizer_AO.Add(btn, panel_flags)
 
@@ -1253,10 +1273,30 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             window = SensorlessResultsViewer(None)
             self._components["sensorless_results"] = window.GetId()
 
-            window.Show()
+        window.Show()
+
+        # Check if a datapoint exists for this position
+        datapoint_z = None
+        if self._device.sensorless_params["save_as_datapoint"]:
+            datapoint_z = cockpit.interfaces.stageMover.getPosition()[2]
+            if datapoint_z in self._device.corrfit_dp_get()["sensorless"]:
+                # Wrong selection => warn but do nothing
+                with wx.MessageDialog(
+                    self,
+                    f"Datapoint already exists for position {datapoint_z}. "
+                    "Overwrite?",
+                    "Warning",
+                    wx.YES_NO | wx.ICON_WARNING
+                ) as dlg:
+                    if dlg.ShowModal() != wx.OK:
+                        window.Show(False)
+                        raise Exception(
+                            "Aborting sensorless AO because datapoint already "
+                            f"exists for position {datapoint_z}..."
+                        )
 
         # Start sensorless AO
-        action(camera)
+        action(camera, datapoint_z)
 
     def OnManualAberration(self, event: wx.CommandEvent) -> None:
         # Try to find modes window
@@ -1535,22 +1575,24 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         window.Show()
         window.Raise()           
 
-    def OnRemoteFocus(self, event: wx.CommandEvent) -> None:
+    def OnCorrectionFitting(self, _: wx.CommandEvent) -> None:
         # Try to find remote focus window
         try:
-            window = self.FindWindowById(self._components["remote_focus"])
+            window = self.FindWindowById(
+                self._components["correction fitting"]
+            )
         except:
             window = None
 
         # If not found, create new window and save reference to its id
         if window is None:
-            window = RemoteFocusControl(self, self._device)    
-            self._components["remote_focus"] = window.GetId()
+            window = CorrectionFittingFrame(self, self._device)
+            self._components["correction fitting"] = window.GetId()
 
         # Show window and bring to front
         window.Show()
-        window.Raise()           
-    
+        window.Raise()
+
     def OnSetCurrentAsFlat(self, event: wx.CommandEvent) -> None:
         """ Sets current actuator values as the new flat """
         modes, _ = self._device.sum_corrections()

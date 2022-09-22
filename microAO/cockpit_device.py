@@ -36,9 +36,13 @@ import json
 import decimal
 import dataclasses
 
+import cockpit.depot
 import cockpit.devices
 import cockpit.devices.device
+import cockpit.experiment.experiment
 import cockpit.interfaces.imager
+import cockpit.interfaces.stageMover
+import cockpit.handlers.deviceHandler
 import cockpit.handlers.stagePositioner
 from cockpit import depot
 import numpy as np
@@ -55,7 +59,6 @@ from microAO.events import *
 from microAO.gui.main import MicroscopeAOCompositeDevicePanel
 from microAO.gui.sensorlessViewer import MetricPlotData
 from microAO.aoAlg import AdaptiveOpticsFunctions
-from microAO.remotez import RemoteZ
 
 aoAlg = AdaptiveOpticsFunctions()
 
@@ -65,6 +68,53 @@ class SensorlessParamsMode:
     index_noll: int
     # The amplitude offsets used for scanning the mode
     offsets: np.ndarray
+
+
+class AOHandler(cockpit.handlers.deviceHandler.DeviceHandler):
+    def __init__(
+        self, name, groupName, callbacks, trigHandler=None, trigLine=None
+    ):
+        super().__init__(
+            name, groupName, False, callbacks, cockpit.depot.AO_DEVICE
+        )
+        # Register with executor
+        if trigHandler and trigLine:
+            trigHandler.registerDigital(self, trigLine)
+        # Initialise cleanup flag
+        self._needs_cleanup = False
+        # Listen for some experiment events
+        events.subscribe(events.PREPARE_FOR_EXPERIMENT, self.experiment_setup)
+        events.subscribe(
+            events.CLEANUP_AFTER_EXPERIMENT, self.experiment_cleanup
+        )
+
+    def is_eligible_for_experiments(self) -> bool:
+        return self.callbacks["is_eligible_for_experiments"]()
+
+    def is_RF_enabled(self) -> bool:
+        return self.callbacks["is_RF_enabled"]()
+
+    def get_RF_position(self) -> float:
+        return self.callbacks["get_RF_position"]()
+
+    def get_RF_limits(self):
+        return self.callbacks["get_RF_limits"]()
+
+    def get_transition_time_ms(self) -> decimal.Decimal:
+        return self.callbacks["get_transition_time_ms"]()
+
+    def experiment_setup(
+        self, experiment: cockpit.experiment.experiment.Experiment
+    ):
+        if self.is_eligible_for_experiments():
+            self._needs_cleanup = True
+            return self.callbacks["experiment_setup"](experiment)
+
+    def experiment_cleanup(self):
+        if self._needs_cleanup:
+            self._needs_cleanup = False
+            return self.callbacks["experiment_cleanup"]()
+
 
 class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
     RF_DEFAULT_LIMITS = (-1, 1)  # micrometres
@@ -104,6 +154,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             ),
             "NA": 1.1,
             "wavelength": 560,
+            "save_as_datapoint": False,
         }
 
         # Shared state for the new image callbacks during sensorless
@@ -133,7 +184,16 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         # Reset the DM
         self.reset()
 
-        # Load values from config
+        # Load values from depot config
+        transition_time_ms = self.config.get("transition_time_ms")
+        if transition_time_ms is None:
+            raise Exception(
+                f"Invalid depot config for device '{self.name}'. Please ensure"
+                " that the 'transition_time_ms' key is set."
+            )
+        self.transition_time_ms = decimal.Decimal(transition_time_ms)
+
+        # Load values from user config
         try:
             self.updateROI()
         except Exception:
@@ -151,9 +211,30 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 self.set_system_flat(np.asarray(sys_flat))
         except Exception:
             pass
+        # Initialise the sensorless and remote focus corrections, as well as
+        # their fitting data
+        cnames = ("sensorless", "remote focus")
+        for cname in cnames:
+            self.set_correction(cname)
+        self._corrfit_dpts = {cname: {} for cname in cnames}
+        self._corrfit_polys = {cname: [] for cname in cnames}
+        self._rf_pos = 0
 
-        # Initialise RemoteZ instance
-        self.remotez = RemoteZ(self)
+        # Subscribe to stage stopping events
+        events.subscribe(events.STAGE_STOPPED, self._on_stage_stopped)
+
+    def makeInitialPublications(self):
+        # Load datapoints stored in the user config; this needs to happen after
+        # the initialisation phase, so that the stage mover interface is ready
+        datapoints_init = userConfig.getValue("ao_corrfit_dpts")
+        if datapoints_init:
+            for cname in datapoints_init:
+                for z in datapoints_init[cname]:
+                    self.corrfit_dp_add(
+                        cname,
+                        z,
+                        np.array(datapoints_init[cname][z])
+                    )
 
     def _on_abort(self):
         for key in self._abort:
@@ -171,32 +252,44 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 ]
             )
         # Determine if the device is driven by an executor
-        exp_elig = False
         t_handler = None
         t_source = self.config.get("triggersource", None)
         t_line = self.config.get("triggerline", None)
         if t_source:
-            exp_elig = True
             t_handler = depot.getHandler(t_source, depot.EXECUTOR)
-        # Return the handler
+        # Return the handlers
         return [
             cockpit.handlers.stagePositioner.PositionerHandler(
                 self.RF_POSHAN_NAME,
                 self.RF_POSHAN_GNAME,
-                exp_elig,
+                False,
                 {
-                    "getMovementTime": lambda *_: self._rf_get_movement_time(),
-                    "getPosition": lambda _: self.remotez.get_z(),
-                    "moveAbsolute": lambda _, position: self._rf_move_absolute(position),
-                    "moveRelative": lambda _, delta: self._rf_move_relative(delta),
-                    "setupDigitalStack": lambda *args: self._rf_setup_exp_zstack(*args),
-                    "flushDigitalStack": lambda *_: self.proxy.flush_patterns()
+                    "getPosition": lambda _: self._rf_pos,
+                    "moveAbsolute": lambda _, position: self._rf_move_absolute(
+                        position
+                    ),
+                    "moveRelative": lambda _, delta: self._rf_move_relative(
+                        delta
+                    ),
                 },
                 2,
                 limits,
-                trigHandler=t_handler,
-                trigLine=t_line
-            )
+            ),
+            AOHandler(
+                self.name,
+                "AO",
+                {
+                    "is_eligible_for_experiments": self._is_eligible_for_experiments,
+                    "is_RF_enabled": self._rf_is_enabled,
+                    "get_RF_position": lambda: self._rf_pos,
+                    "get_RF_limits": lambda: limits,
+                    "get_transition_time_ms": lambda: self.transition_time_ms,
+                    "experiment_setup": self._experiment_setup,
+                    "experiment_cleanup": self._experiment_cleanup,
+                },
+                t_handler,
+                t_line,
+            ),
         ]
 
     def makeUI(self, parent):
@@ -564,7 +657,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.toggle_correction("system_flat", True)
         self.refresh_corrections()
 
-    def correctSensorlessSetup(self, camera):
+    def correctSensorlessSetup(self, camera, datapoint_z=None):
         logger.log.info("Performing sensorless AO setup")
 
         # Check for calibration
@@ -598,6 +691,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             },
             "mode_index": 0,
             "offset_index": 0,
+            "datapoint_z": datapoint_z
         }
 
         # Signal start of sensorless AO routine
@@ -751,11 +845,19 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
 
             self.correctSensorlessAberation()
 
-            # Set the sensorless AO correction and enable it
-            self.set_correction(
-                "sensorless", self.sensorless_data["corrections"]
-            )
-            self.refresh_corrections()
+            if self.sensorless_params["save_as_datapoint"]:
+                # Save the result as a datapoint
+                self.corrfit_dp_add(
+                    "sensorless",
+                    self.sensorless_data["datapoint_z"],
+                    self.sensorless_data["corrections"]
+                )
+            else:
+                # Update the correction's values directly
+                self.set_correction(
+                    "sensorless", self.sensorless_data["corrections"]
+                )
+                self.refresh_corrections()
 
             # Signal end of sensorless AO routine
             events.publish(PUBSUB_SENSORLESS_FINISH)
@@ -873,26 +975,63 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
     def update_control_matrix(self, control_matrix):
         self.proxy.set_controlMatrix(control_matrix)
 
-    def _rf_get_movement_time(self):
-        return (self.RF_DURATION_TRAVEL, self.RF_DURATION_STABILISATION)
+    def rf_get_position(self):
+        return self._rf_pos
+
+    def _rf_set_position(self, position):
+        # Re-evaluate the regression model and update the correction
+        modes = self._corrfit_eval("remote focus", position)
+        if len(modes) == 0:
+            raise Exception("Remote focusing requires at least 2 data points.")
+        self.set_correction("remote focus", modes=modes)
+        self.refresh_corrections()
+
+        # Update internal position
+        self._rf_pos = position
 
     def _rf_move_absolute(self, position):
-        self.remotez.set_z(position)
-        time.sleep(
-            float(sum(self._rf_get_movement_time()) * decimal.Decimal(1e-3))
-        )
+        self._rf_set_position(position)
         events.publish(events.STAGE_MOVER, 2)
+        time.sleep(
+            float(self.transition_time_ms * decimal.Decimal(1e-3))
+        )
         events.publish(events.STAGE_STOPPED, self.RF_POSHAN_NAME)
 
     def _rf_move_relative(self, delta):
-        self.remotez.set_z(self.remotez.get_z() + delta)
-        time.sleep(
-            float(sum(self._rf_get_movement_time()) * decimal.Decimal(1e-3))
-        )
+        self._rf_set_position(self._rf_pos + delta)
         events.publish(events.STAGE_MOVER, 2)
+        time.sleep(
+            float(self.transition_time_ms * decimal.Decimal(1e-3))
+        )
         events.publish(events.STAGE_STOPPED, self.RF_POSHAN_NAME)
 
-    def _rf_setup_exp_zstack(self, start, step_size, steps, repeats=1):
+    def _rf_is_enabled(self):
+        corrections = self.get_corrections()
+        return corrections["remote focus"]["enabled"]
+
+    def _on_stage_stopped(self, _):
+        # Get new Z position
+        new_z = cockpit.interfaces.stageMover.getPosition()[2]
+        # Update correction if necessary
+        modes = self._corrfit_eval("sensorless", new_z)
+        if len(modes) > 0:
+            self.set_correction("sensorless", modes=modes)
+            self.refresh_corrections()
+
+    def _is_eligible_for_experiments(self):
+        # Determine if the AO device needs to be triggered during experiments
+        corrections = self.get_corrections()
+        if corrections["remote focus"]["enabled"] or (
+            corrections["sensorless"]["enabled"]
+            and len(self._corrfit_dpts["sensorless"]) > 1
+        ):
+            return True
+        return False
+
+    def _experiment_setup(
+        self, experiment: cockpit.experiment.experiment.Experiment
+    ):
+        # Validate the triggering configuration of the device
         ttype, tmode = self.proxy.get_trigger()
         if (
             ttype
@@ -908,18 +1047,56 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 "type is set to RISING_EDGE/HIGH or FALLING_EDGE/LOW and that "
                 "its trigger mode is set to ONCE."
             )
+        # Take snapshot of current corrections
+        corrections = self.get_corrections()
+        corrections_to_restore = set()
+        # Ensure that the remote focusing correction has enough datapoints
+        if (
+            corrections["remote focus"]["enabled"]
+            and len(self._corrfit_dpts["remote focus"]) < 2
+        ):
+            raise Exception(
+                "Need at least 2 data points for 'remote focus' correction."
+            )
         # Calculate patterns
-        patterns = np.zeros((steps, self.no_actuators))
-        for i in range(steps):
-            actuators = self.remotez.calc_shape(start + (step_size * i))
-            patterns[i] = actuators
+        patterns = np.zeros((experiment.numZSlices, self.no_actuators))
+        for i in range(patterns.shape[0]):
+            if corrections["remote focus"]["enabled"]:
+                z_rf = experiment.aoRFBottom + (experiment.sliceHeight * i)
+                z_abs = cockpit.interfaces.stageMover.getPosition()[2] + z_rf
+            else:
+                z_rf = None
+                z_abs = experiment.zStart + (experiment.sliceHeight * i)
+            for cname, z in (
+                ("remote focus", z_rf),
+                ("sensorless", z_abs),
+            ):
+                if corrections[cname]["enabled"]:
+                    corrections_to_restore.add(cname)
+                    modes = self._corrfit_eval(cname, z)
+                    if len(modes) > 0:
+                        self.set_correction(cname, modes=modes)
+            patterns[i] = self.proxy.calc_shape()
         # Repeat as necessary
-        patterns = np.tile(patterns, (repeats, 1))
-        # Skip the first pattern because experiments already place the remote
-        # focusing stage at the starting position
+        patterns = np.tile(patterns, (experiment.numReps, 1))
+        # Apply the first pattern and omit it from the queue
+        self.proxy.send(patterns[0])
         patterns = patterns[1:, :]
         # Queue patterns
         self.proxy.queue_patterns(patterns)
+        # Restore original corrections
+        for cname in corrections_to_restore:
+            self.set_correction(
+                cname,
+                modes=corrections[cname]["modes"],
+                actuator_values=corrections[cname]["actuator_values"]
+            )
+
+    def _experiment_cleanup(self):
+        # Flush the patterns, in case the experiment ended prematurely
+        self.proxy.flush_patterns()
+        # Refresh the corrections to apply the shape from before the experiment
+        self.refresh_corrections()
 
     def _generate_exercise_pattern(
         self,
@@ -956,3 +1133,66 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             self.send(pattern_inverted)
             time.sleep(pattern_hold_time * 1e-3)
         self.reset()
+
+    def corrfit_dp_get(self):
+        return self._corrfit_dpts
+
+    def corrfit_dp_add(self, cname, z, modes):
+        self._corrfit_dpts[cname][z] = modes
+        self._corrfit_update(cname)
+        # Update corrections if necessary
+        z_current = self._rf_pos
+        if cname == "sensorless":
+            z_current = cockpit.interfaces.stageMover.getPosition()[2]
+        modes = self._corrfit_eval(cname, z_current)
+        if len(modes) > 0:
+            self.set_correction(cname, modes=modes)
+            self.refresh_corrections()
+
+    def corrfit_dp_rem(self, cname, z):
+        # Delete the data point and update the regression model
+        del self._corrfit_dpts[cname][z]
+        self._corrfit_update(cname)
+        # Get the current Z position
+        z_current = self._rf_pos
+        if cname == "sensorless":
+            z_current = cockpit.interfaces.stageMover.getPosition()[2]
+        # Re-evaluate the regression model
+        modes = self._corrfit_eval(cname, z_current)
+        if len(modes) == 0:
+            # Not enough data points for evaluation => disable and clear the
+            # correction
+            self.toggle_correction(cname, False)
+            modes = None
+        self.set_correction(cname, modes=modes)
+        self.refresh_corrections()
+        # Reset the remote focus position if there were not enough data points
+        if modes is None and cname == "remote focus":
+            self._rf_pos = 0
+            events.publish(events.STAGE_MOVER, 2)
+            time.sleep(
+                float(self.transition_time_ms * decimal.Decimal(1e-3))
+            )
+            events.publish(events.STAGE_STOPPED, self.RF_POSHAN_NAME)
+
+    def _corrfit_update(self, cname):
+        # Clear the list of polynomials
+        self._corrfit_polys[cname] = []
+        # Check if there are enough datapoints
+        zs = sorted(self._corrfit_dpts[cname].keys())
+        if len(zs) < 2:
+            # Not enough datapoints for fitting a line => do nothing
+            return
+        # Arrange all the modes into a matrix of shape Z x M, where Z is
+        # the number of datapoints and M is the number of modes
+        modes = np.array(
+            [self._corrfit_dpts[cname][z] for z in zs]
+        )
+        # Fit a line to the set of (z, mode) points for each mode
+        for mode_index in range(modes.shape[1]):
+            self._corrfit_polys[cname].append(
+                np.polynomial.Polynomial.fit(zs, modes[:, mode_index], 1)
+            )
+
+    def _corrfit_eval(self, cname, z):
+        return np.array([poly(z) for poly in self._corrfit_polys[cname]])

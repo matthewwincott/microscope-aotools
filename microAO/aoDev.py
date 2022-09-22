@@ -27,7 +27,6 @@ import time
 import logging
 import copy
 
-import aotools
 from microAO.aoAlg import AdaptiveOpticsFunctions
 
 # Should fix this with multiple inheritance for this class!
@@ -74,7 +73,7 @@ class AdaptiveOpticsDevice(Device):
 
 
     def __init__(
-        self, ao_element_uri, wavefront_uri=None, slm_uri=None, control_matrix=None, system_flat=None, **kwargs
+        self, ao_element_uri, wavefront_uri=None, slm_uri=None, control_matrix=None, system_flat=None, saturation_limits=(0.1, 0.9), **kwargs
     ):
         # Init will fail if devices it depends on aren't already running, but
         # deviceserver should retry automatically.
@@ -155,6 +154,18 @@ class AdaptiveOpticsDevice(Device):
             )
 
         self._wavefront_error_mode = self.wavefront_rms_error
+
+        if (
+            saturation_limits[0] < 0
+            or saturation_limits[1] > 1
+            or saturation_limits[0] > saturation_limits[1]
+        ):
+            raise Exception(
+                "Wrong value for parameter 'saturation_limits'. The limits "
+                "should be in the range [0;1] and the lower limit (first "
+                "element) should be the lesser of the two."
+            )
+        self._saturation_limits = saturation_limits
 
     def _do_shutdown(self):
         pass
@@ -345,15 +356,31 @@ class AdaptiveOpticsDevice(Device):
     @Pyro4.expose
     def send(self, values):
         _logger.info("Sending pattern to AO element")
-        _logger.debug("Sending values: {}".format(values))
 
         ttype, tmode = self.get_trigger()
         if ttype != TriggerType.SOFTWARE:
             self.set_trigger(TriggerType.SOFTWARE, TriggerMode.ONCE)
 
-        # Need to normalise patterns because general DM class expects 0-1 values
-        values[values > 1.0] = 1.0
-        values[values < 0.0] = 0.0
+        # Saturate values
+        for limit, candidates in (
+            (
+                self._saturation_limits[0],
+                values < self._saturation_limits[0]
+            ),
+            (
+                self._saturation_limits[1],
+                values > self._saturation_limits[1]
+            )
+        ):
+            if candidates.any():
+                indices = candidates.nonzero()[0]
+                _logger.info(
+                    f"Saturating the voltages of actuators {list(indices)} to "
+                    f"{limit}."
+                )
+                values[indices] = limit
+
+        _logger.debug("Sending values: {}".format(values))
 
         try:
             self.ao_element.apply_pattern(values)
