@@ -58,9 +58,7 @@ import microAO.dm_layouts
 from microAO.events import *
 from microAO.gui.main import MicroscopeAOCompositeDevicePanel
 from microAO.gui.sensorlessViewer import MetricPlotData
-from microAO.aoAlg import AdaptiveOpticsFunctions
-
-aoAlg = AdaptiveOpticsFunctions()
+import microAO.aoAlg
 
 @dataclasses.dataclass(frozen=True)
 class SensorlessParamsMode:
@@ -131,6 +129,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.proxy = Pyro4.Proxy(self.uri)
         # self.proxy.set_trigger(cp_ttype="FALLING_EDGE", cp_tmode="ONCE")
         self.no_actuators = self.proxy.get_n_actuators()
+
+        self.aoAlg = microAO.aoAlg.AdaptiveOpticsFunctions()
 
         # Need initial values for system flat calculations
         self.sys_flat_parameters = {
@@ -315,7 +315,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 raise e
 
         # Update local aoAlg instance
-        aoAlg.make_mask(int(np.round(circle_parameters[2])))
+        self.aoAlg.make_mask(int(np.round(circle_parameters[2])))
 
     def checkFourierFilter(self):
         circle_parameters = userConfig.getValue("dm_circleParams")
@@ -330,7 +330,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                     mask_di=int((2 * circle_parameters[2]) * (3.0 / 16.0)),
                 )
                 # Update local aoAlg instance
-                aoAlg.make_fft_filter(
+                self.aoAlg.make_fft_filter(
                     test_image,
                     window_dim=50,
                     mask_di=int((2 * circle_parameters[2]) * (3.0 / 16.0)),
@@ -455,16 +455,13 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             roi[0] - roi[2] : roi[0] + roi[2],
             roi[1] - roi[2] : roi[1] + roi[2],
         ]
-        if np.any(aoAlg.mask) is None:
-            aoAlg.make_mask(self.roi[2])
+        if np.any(self.aoAlg.mask) is None:
+            self.aoAlg.make_mask(self.roi[2])
             image = image_cropped
         else:
-            image = image_cropped * aoAlg.mask
+            image = image_cropped * self.aoAlg.mask
         # Unwrap the phase
-        return aoAlg.unwrap_interferometry(image)
-
-    def calc_error_RMS(self, unwrapped_phase, modes_to_subtract=(0, 1, 2)):
-        return aoAlg.calc_phase_error_RMS(unwrapped_phase, modes_to_subtract)
+        return self.aoAlg.unwrap_interferometry(image)
 
     def _mask_circular(self, dims, radius=None, centre=None):
         # Init radius and centre if necessary
@@ -524,7 +521,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                     )
                 else:
                     # Calculate Zernike coefficients
-                    zernike_coefficients[image_index] = aoAlg.get_zernike_modes(
+                    zernike_coefficients[image_index] = self.aoAlg.get_zernike_modes(
                         phase_unwrapped,
                         self.no_actuators
                     )
@@ -532,7 +529,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 image_index += 1
         if not self._abort["calib_calc"]:
             # Calculate the control matrix
-            control_matrix = aoAlg.create_control_matrix(
+            control_matrix = self.aoAlg.create_control_matrix(
                 zernikeAmps=zernike_coefficients,
                 pokeSteps=actuator_values,
                 numActuators=self.no_actuators
@@ -622,7 +619,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             # Calculate RMS error
             error_current = self.calc_error_RMS(phase_unwrapped)
             # Get Zernike modes and filter out modes that should be ignored
-            modes_measured = aoAlg.get_zernike_modes(
+            modes_measured = self.aoAlg.get_zernike_modes(
                 phase_unwrapped,
                 self.no_actuators
             )
@@ -704,7 +701,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         events.publish(
             PUBSUB_SENSORLESS_START,
             max_scan_range,
-            aoAlg.get_metric(),
+            self.aoAlg.get_metric(),
             self.sensorless_data["metric_params"]
         )
 
@@ -776,7 +773,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         )
         image_stack = self.sensorless_data["image_stack"][-modes.shape[0] :]
         # Find aberration amplitudes and correct
-        peak, metrics, metric_diagnostics = aoAlg.find_zernike_amp_sensorless(
+        peak, metrics, metric_diagnostics = self.aoAlg.find_zernike_amp_sensorless(
             image_stack=image_stack,
             modes=modes,
             **self.sensorless_data["metric_params"]

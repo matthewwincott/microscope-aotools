@@ -5,6 +5,7 @@ from microAO.gui.sensorlessViewer import SensorlessResultsViewer
 from microAO.gui.DMViewer import DMViewer
 from microAO import cockpit_device
 import microAO.events
+import microAO.aoAlg
 
 import cockpit.events
 import cockpit.gui.device
@@ -1103,8 +1104,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
         phase_unwrapped = self._device.unwrap_phase(phase)
         # Get the RMS error of the unwrapped phase without the Piston, Tip, and
         # Tilt modes
-        phase_unwrapped_MPTT_RMS_error = self._device.calc_error_RMS(
-            phase_unwrapped
+        phase_unwrapped_MPTT_RMS_error = (
+            self._device.aoAlg.calc_phase_error_RMS(phase_unwrapped)
         )
         # Calculate the power spectrum
         phase_power_spectrum = _computePowerSpectrum(phase)
@@ -1531,24 +1532,19 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
     def OnSetMetric(self, event: wx.CommandEvent) -> None:
         del event
 
-        metrics = dict([
-            ("Fourier metric", "fourier"),
-            ("Contrast metric", "contrast"),
-            ("Fourier Power metric", "fourier_power"),
-            ("Gradient metric", "gradient"),
-            ("Second Moment metric", "second_moment"),
-        ])
+        metrics = sorted(list(microAO.aoAlg.metric_function.keys()))
 
         with wx.SingleChoiceDialog(
             self,
             "Select metric",
             "Metric",
-            list(metrics.keys()),
+            metrics,
             wx.CHOICEDLG_STYLE
         ) as dlg:
+            dlg.SetSelection(metrics.index(self._device.aoAlg.get_metric()))
             if dlg.ShowModal() == wx.ID_OK:
-                metric = metrics[dlg.GetStringSelection()]
-                self._device.proxy.set_metric(metric)
+                metric = metrics[dlg.GetSelection()]
+                self._device.aoAlg.set_metric(metric)
                 logger.log.info(f"Set sensorless AO metric to: {metric}")
 
     def OnSetSensorlessParameters(self, _) -> None:
