@@ -1038,6 +1038,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             )
             or tmode != microscope.devices.TriggerMode.ONCE
         ):
+            events.publish(events.USER_ABORT)
             raise Exception(
                 "Wrong trigger configuration for adaptive element. In order to"
                 " run experiments, please ensure that the device's trigger "
@@ -1052,6 +1053,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             corrections["remote focus"]["enabled"]
             and len(self._corrfit_dpts["remote focus"]) < 2
         ):
+            events.publish(events.USER_ABORT)
             raise Exception(
                 "Need at least 2 data points for 'remote focus' correction."
             )
