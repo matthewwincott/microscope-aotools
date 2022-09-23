@@ -515,7 +515,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                     phase_unwrapped
                 )
                 if no_discontinuities > np.prod(phase_unwrapped.shape) / 1000.0:
-                    logger.error(
+                    logger.log.error(
                         f"Unwrapped phase for image {image_index} contained "
                         "discontinuites. Aborting calibration..."
                     )
