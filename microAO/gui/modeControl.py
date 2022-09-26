@@ -2,6 +2,7 @@ import wx
 import wx.lib.scrolledpanel
 import numpy as np
 import cockpit
+import cockpit.events
 import microAO
 import microAO.events
 import microAO.gui.common
@@ -140,12 +141,11 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
             microAO.events.PUBSUB_SET_PHASE, self._on_new_modes
         )
         cockpit.events.subscribe(
-            microAO.events.PUBUSB_CHANGED_CORRECTION,
-            lambda *_: self._on_new_modes
+            microAO.events.PUBUSB_CHANGED_CORRECTION, self._on_new_modes
         )
 
         # Bind close event
-        self.Bind(wx.EVT_CLOSE, self._on_close)
+        parent.Bind(wx.EVT_CLOSE, self._on_close)
 
     def _create_mode_controls(self, mode_number, grid, row):
         # Create widget table with the following columns: widget, column, span,
@@ -368,7 +368,7 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
         # Change slider
         self._apply_modes()
 
-    def _on_new_modes(self):
+    def _on_new_modes(self, *_):
         corrections = self._device.get_corrections(include_default=True)
         del corrections["mode control"]
         modes, _ = self._device.sum_corrections(corrections)
@@ -388,11 +388,16 @@ class _ModesPanel(wx.lib.scrolledpanel.ScrolledPanel):
             # Update text field
             self._mode_controls[mode_number][10].SetLabel(f"{value:.3f}")
 
-    def _on_close(self):
+    def _on_close(self, event):
         # Unsubscribe from pubsub events
         cockpit.events.unsubscribe(
-            microAO.events.PUBSUB_SET_PHASE, self._on_phase_change
+            microAO.events.PUBSUB_SET_PHASE, self._on_new_modes
         )
+        cockpit.events.unsubscribe(
+            microAO.events.PUBUSB_CHANGED_CORRECTION, self._on_new_modes
+        )
+        # Continue + destroy frame
+        event.Skip()
 
     def _synchronised_update(self, mode_number, mode_value):
         # Change value
