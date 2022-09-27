@@ -180,9 +180,20 @@ class CorrectionFittingFrame(wx.Frame):
             cockpit.events.STAGE_STOPPED, self._on_stage_stopped
         )
 
+        # Handle close events
+        self.Bind(wx.EVT_CLOSE, self._on_close)
+
         # Update GUI
         self._update_data_list()
         self._update_fitting_plot()
+
+    def _on_close(self, event: wx.CloseEvent) -> None:
+        # Unsubscribe from stage events
+        cockpit.events.unsubscribe(
+            cockpit.events.STAGE_STOPPED, self._on_stage_stopped
+        )
+        # Let the default event handler destroy the frame
+        event.Skip()
 
     def _on_stage_stopped(self, _) -> None:
         self._update_fitting_plot()
