@@ -617,7 +617,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
                 )
                 break
             # Calculate RMS error
-            error_current = self.calc_error_RMS(phase_unwrapped)
+            error_current = self.aoAlg.calc_phase_error_RMS(phase_unwrapped)
             # Get Zernike modes and filter out modes that should be ignored
             modes_measured = self.aoAlg.get_zernike_modes(
                 phase_unwrapped,
