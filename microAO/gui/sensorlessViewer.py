@@ -10,15 +10,15 @@ import matplotlib.backends.backend_wxagg
 import matplotlib.backends.backend_wx
 import matplotlib.patches
 import tifffile
-import skimage.measure
+import skimage.exposure
 
 import cockpit
 import microAO.aoMetrics
 import microAO.events
 
 
-class _DiagnosticsPanelFourier(wx.Panel):
-    _DEFAULT_CMAP = "twilight_r"
+class _DiagnosticsPanelBase(wx.Panel):
+    _DEFAULT_CMAP = "inferno"
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -109,42 +109,7 @@ class _DiagnosticsPanelFourier(wx.Panel):
         self.SetSizerAndFit(sizer)
 
     def _update_plot(self):
-        index_mode = self._slider_mode.GetValue() - 1
-        index_meas = self._slider_meas.GetValue() - 1
-        diagnostics = (
-            self.GetParent()
-            .GetParent()
-            ._metric_diagnostics[index_mode][index_meas]
-        )
-        # Clear axes
-        self._axes.clear()
-        # Update image
-        self._axes.imshow(
-            diagnostics.fft_sq_log, cmap=self._cmap_choice.GetStringSelection()
-        )
-        self._axes.set_xticks([])
-        self._axes.set_yticks([])
-        self._axes.set_frame_on(False)
-        # Adjust noise mask circle
-        for contour in skimage.measure.find_contours(
-            diagnostics.noise_mask, 0
-        ):
-            artist_noise = self._axes.plot(
-                contour[:, 1], contour[:, 0], "-r", linewidth=2
-            )
-        # Draw OTF ring radii
-        for contour in skimage.measure.find_contours(diagnostics.OTF_mask, 0):
-            artist_otf = self._axes.plot(
-                contour[:, 1], contour[:, 0], "-g", linewidth=2
-            )
-        # Draw legend
-        self._axes.legend(
-            (artist_noise[0], artist_otf[0]),
-            ("noise mask", "OTF mask"),
-            loc="upper left",
-        )
-        # Update canvas
-        self._canvas.draw()
+        raise NotImplementedError()
 
     def _on_slider_mode(self, event: wx.CommandEvent):
         mode_index = event.GetInt() - 1
@@ -195,20 +160,163 @@ class _DiagnosticsPanelFourier(wx.Panel):
         self._update_plot()
 
 
-class _DiagnosticsPanelNotImplemented(wx.Panel):
-    def initialise(self):
-        pass
+class _DiagnosticsPanelFourier(_DiagnosticsPanelBase):
+    def _update_plot(self):
+        index_mode = self._slider_mode.GetValue() - 1
+        index_meas = self._slider_meas.GetValue() - 1
+        diagnostics = (
+            self.GetParent()
+            .GetParent()
+            ._metric_diagnostics[index_mode][index_meas]
+        )
+        # Clear axes
+        self._figure.clear()
+        # Update images
+        self._axes = self._figure.subplots(1, 2, sharex=True, sharey=True)
+        self._axes[0].imshow(
+            diagnostics.fft_sq_log, cmap=self._cmap_choice.GetStringSelection()
+        )
+        self._axes[1].imshow(
+            diagnostics.freq_above_noise,
+            cmap=self._cmap_choice.GetStringSelection(),
+        )
+        for a in self._axes:
+            a.axis("off")
+        # Update canvas
+        self._canvas.draw()
 
-    def update(self):
-        pass
+
+class _DiagnosticsPanelContrast(_DiagnosticsPanelBase):
+    def _update_plot(self):
+        index_mode = self._slider_mode.GetValue() - 1
+        index_meas = self._slider_meas.GetValue() - 1
+        diagnostics = (
+            self.GetParent()
+            .GetParent()
+            ._metric_diagnostics[index_mode][index_meas]
+        )
+        # Clear axes
+        self._figure.clear()
+        # Update image and table
+        self._axes = self._figure.subplots(1, 2)
+        self._axes[0].imshow(
+            skimage.exposure.rescale_intensity(
+                diagnostics.image_raw,
+                in_range=tuple(
+                    numpy.percentile(diagnostics.image_raw, (1, 99))
+                ),
+            ),
+            cmap=self._cmap_choice.GetStringSelection(),
+        )
+        self._axes[1].table(
+            [
+                ["Mean top", "Mean bottom"],
+                [diagnostics.mean_top, diagnostics.mean_bottom],
+            ],
+            cellLoc="center",
+            loc="center",
+        )
+        for a in self._axes:
+            a.axis("off")
+        # Update canvas
+        self._canvas.draw()
+
+
+class _DiagnosticsPanelGradient(_DiagnosticsPanelBase):
+    def _update_plot(self):
+        index_mode = self._slider_mode.GetValue() - 1
+        index_meas = self._slider_meas.GetValue() - 1
+        diagnostics = (
+            self.GetParent()
+            .GetParent()
+            ._metric_diagnostics[index_mode][index_meas]
+        )
+        # Clear axes
+        self._figure.clear()
+        # Update images
+        self._axes = self._figure.subplots(1, 4, sharex=True, sharey=True)
+        self._axes[0].imshow(
+            skimage.exposure.rescale_intensity(
+                diagnostics.image_raw,
+                in_range=tuple(
+                    numpy.percentile(diagnostics.image_raw, (1, 99))
+                ),
+            ),
+            cmap=self._cmap_choice.GetStringSelection(),
+        )
+        self._axes[0].set_title("Raw image")
+        self._axes[1].imshow(diagnostics.grad_mask_x)
+        self._axes[1].set_title("Grad. mask X")
+        self._axes[2].imshow(diagnostics.grad_mask_y)
+        self._axes[2].set_title("Grad. mask Y")
+        self._axes[3].imshow(diagnostics.correction_grad)
+        self._axes[3].set_title("Gradient")
+        for a in self._axes:
+            a.axis("off")
+        # Update canvas
+        self._canvas.draw()
+
+
+class _DiagnosticsPanelFourierPower(_DiagnosticsPanelBase):
+    def _update_plot(self):
+        index_mode = self._slider_mode.GetValue() - 1
+        index_meas = self._slider_meas.GetValue() - 1
+        diagnostics = (
+            self.GetParent()
+            .GetParent()
+            ._metric_diagnostics[index_mode][index_meas]
+        )
+        # Clear axes
+        self._figure.clear()
+        # Update images
+        self._axes = self._figure.subplots(1, 2, sharex=True, sharey=True)
+        self._axes[0].imshow(
+            diagnostics.fftarray_sq_log,
+            cmap=self._cmap_choice.GetStringSelection(),
+        )
+        self._axes[1].imshow(
+            diagnostics.freq_above_noise,
+            cmap=self._cmap_choice.GetStringSelection(),
+        )
+        for a in self._axes:
+            a.axis("off")
+        # Update canvas
+        self._canvas.draw()
+
+
+class _DiagnosticsPanelSecondMoment(_DiagnosticsPanelBase):
+    def _update_plot(self):
+        index_mode = self._slider_mode.GetValue() - 1
+        index_meas = self._slider_meas.GetValue() - 1
+        diagnostics = (
+            self.GetParent()
+            .GetParent()
+            ._metric_diagnostics[index_mode][index_meas]
+        )
+        # Clear axes
+        self._figure.clear()
+        # Update images
+        self._axes = self._figure.subplots(1, 2, sharex=True, sharey=True)
+        self._axes[0].imshow(
+            diagnostics.fftarray_sq_log,
+            cmap=self._cmap_choice.GetStringSelection(),
+        )
+        self._axes[1].imshow(
+            diagnostics.fftarray_sq_log_masked,
+            cmap=self._cmap_choice.GetStringSelection(),
+        )
+        for a in self._axes:
+            a.axis("off")
+        # Update canvas
+        self._canvas.draw()
 
 
 _DIAGNOSTICS_PANEL_MAP = {
     "fourier": _DiagnosticsPanelFourier,
-    "contrast": _DiagnosticsPanelNotImplemented,
-    "fourier_power": _DiagnosticsPanelNotImplemented,
-    "gradient": _DiagnosticsPanelNotImplemented,
-    "second_moment": _DiagnosticsPanelNotImplemented,
+    "contrast": _DiagnosticsPanelContrast,
+    "fourier_power": _DiagnosticsPanelFourierPower,
+    "gradient": _DiagnosticsPanelGradient,
+    "second_moment": _DiagnosticsPanelSecondMoment,
 }
 
 
