@@ -1500,11 +1500,13 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
                 "Number of iterations",
                 "Error threshold",
                 "Noll indices to ignore",
+                "Gain",
             ],
             (
                 int(params["iterations"]),
                 params["error_threshold"],
                 (params["modes_to_ignore"] + 1).tolist(),
+                params["gain"],
             ),
         )
         iterations = float(inputs[0])
@@ -1528,6 +1530,8 @@ class MicroscopeAOCompositeDevicePanel(wx.Panel):
             params["modes_to_ignore"] = np.asarray(
                 [int(z_ind) - 1 for z_ind in inputs[2][1:-1].split(", ")]
             )
+
+        params["gain"] = float(inputs[3])
 
     def OnSetMetric(self, event: wx.CommandEvent) -> None:
         del event

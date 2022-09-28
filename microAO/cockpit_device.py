@@ -136,7 +136,8 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
         self.sys_flat_parameters = {
             "iterations" : 10,
             "error_threshold" : np.inf,
-            "modes_to_ignore" : np.array([0, 1, 2])
+            "modes_to_ignore" : np.array([0, 1, 2]),
+            "gain": 0.7
         }
 
         # Need intial values for sensorless AO
@@ -629,7 +630,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             # Update state variables
             iteration += 1
             if error_current < error:
-                modes += -modes_measured
+                modes += -modes_measured * params["gain"]
                 error = error_current
             # Check if exit conditions have been met
             if (iteration >= params["iterations"]) or (
