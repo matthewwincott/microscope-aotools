@@ -219,6 +219,7 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             self.set_correction(cname)
         self._corrfit_dpts = {cname: {} for cname in cnames}
         self._corrfit_polys = {cname: [] for cname in cnames}
+        self._corrfit_coeffs = {cname: 1.0 for cname in cnames}
         self._rf_pos = 0
 
         # Subscribe to stage stopping events
@@ -1195,4 +1196,6 @@ class MicroscopeAOCompositeDevice(cockpit.devices.device.Device):
             )
 
     def _corrfit_eval(self, cname, z):
-        return np.array([poly(z) for poly in self._corrfit_polys[cname]])
+        return np.array(
+            [poly(z) for poly in self._corrfit_polys[cname]]
+        ) * self._corrfit_coeffs[cname]
