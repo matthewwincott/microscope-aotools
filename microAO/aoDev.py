@@ -165,6 +165,16 @@ class AdaptiveOpticsDevice(Device):
         pass
 
     @Pyro4.expose
+    @property
+    def ao_element(self):
+        return self._ao_element
+
+    @Pyro4.expose
+    @ao_element.setter
+    def ao_element(self, ao_element):
+        self._ao_element = ao_element
+
+    @Pyro4.expose
     def enable_camera(self):
         self.wavefront_camera.enable()
 
