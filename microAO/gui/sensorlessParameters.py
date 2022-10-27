@@ -6,13 +6,6 @@ import dataclasses
 from microAO.aoMetrics import metric_names
 from microAO.aoRoutines import ConventionalParamsMode
 
-@dataclasses.dataclass(frozen=True)
-class ConventionalParamsMode:
-    # Noll index
-    index_noll: int
-    # The amplitude offsets used for scanning the mode
-    offsets: np.ndarray
-
 class ConventionalParametersDialog(wx.Dialog):
     def __init__(self, parent):
         super().__init__(
@@ -31,14 +24,18 @@ class ConventionalParametersDialog(wx.Dialog):
         self._textctrl_na = wx.TextCtrl(panel, value=str(params["NA"]))
         self._textctrl_wavelength = wx.TextCtrl(
             panel,
-            value=str(int(params["wavelength"]*1e9))
+            value=str(int(params["wavelength"] * 1e9))
         )
+        metric_choices = list(metric_names.values())
+        current_metric_name = metric_names[params['metric']]
+        self._textctrl_metric = wx.ComboBox(panel, value=current_metric_name, choices=metric_choices, style=wx.CB_READONLY)
         self._textctrl_ranges = wx.TextCtrl(
             panel,
             value=self._params2text(params),
             size=wx.Size(400, 200),
             style=wx.TE_MULTILINE,
         )
+        self._textctrl_logpath = FileBrowseButton(panel, labelText="Log path:")
         self._checkbox_dp_save = wx.CheckBox(panel)
         self._checkbox_dp_save.SetValue(params["save_as_datapoint"])
 
@@ -97,15 +94,29 @@ class ConventionalParametersDialog(wx.Dialog):
                 5
             ),
             (
-                wx.StaticText(panel, label="Save results as datapoint?"),
+                wx.StaticText(panel, label="Metric:"),
                 wx.GBPosition(3, 0),
                 wx.GBSpan(1, 1),
                 wx.ALL,
                 5
             ),
             (
-                self._checkbox_dp_save,
+                self._textctrl_metric,
                 wx.GBPosition(3, 1),
+                wx.GBSpan(1, 1),
+                wx.ALL,
+                5
+            ),
+            (
+                wx.StaticText(panel, label="Save results as datapoint?"),
+                wx.GBPosition(4, 0),
+                wx.GBSpan(1, 1),
+                wx.ALL,
+                5
+            ),
+            (
+                self._checkbox_dp_save,
+                wx.GBPosition(4, 1),
                 wx.GBSpan(1, 1),
                 wx.ALL,
                 5
@@ -121,14 +132,21 @@ class ConventionalParametersDialog(wx.Dialog):
                         "amplitude\n\tScan range steps"
                     )
                 ),
-                wx.GBPosition(4, 0),
+                wx.GBPosition(5, 0),
                 wx.GBSpan(1, 2),
                 wx.ALL,
                 5
             ),
             (
                 self._textctrl_ranges,
-                wx.GBPosition(5, 0),
+                wx.GBPosition(6, 0),
+                wx.GBSpan(1, 2),
+                wx.ALL | wx.EXPAND,
+                5
+            ),
+            (
+                self._textctrl_logpath,
+                wx.GBPosition(7, 0),
                 wx.GBSpan(1, 2),
                 wx.ALL | wx.EXPAND,
                 5
@@ -219,6 +237,8 @@ class ConventionalParametersDialog(wx.Dialog):
             [self._textctrl_reps, "repeats", 0, int],
             [self._textctrl_na, "numerical aperture", 0, float],
             [self._textctrl_wavelength, "wavelength", 0, int],
+            [self._textctrl_metric, "metric", 0, str],
+            [self._textctrl_logpath, "logpath", 0, str]
         ]
         for widget_data in widgets_data:
             try:
@@ -234,6 +254,7 @@ class ConventionalParametersDialog(wx.Dialog):
                     dlg.ShowModal()
                 return
         # Do widget-specific parsing for each of the single-line widgets
+        ## Parse repeats
         if widgets_data[0][2] < 1:
             with wx.MessageDialog(
                 self,
@@ -243,6 +264,7 @@ class ConventionalParametersDialog(wx.Dialog):
             ) as dlg:
                 dlg.ShowModal()
             return
+        ## Parse NA
         if widgets_data[1][2] <= 0.0:
             with wx.MessageDialog(
                 self,
@@ -252,6 +274,7 @@ class ConventionalParametersDialog(wx.Dialog):
             ) as dlg:
                 dlg.ShowModal()
             return
+        ## Parse wavelength
         if widgets_data[2][2] <= 0:
             with wx.MessageDialog(
                 self,
@@ -261,6 +284,8 @@ class ConventionalParametersDialog(wx.Dialog):
             ) as dlg:
                 dlg.ShowModal()
             return
+        ## Parse metric
+        metric = next(key for key, value in metric_names.items() if value == widgets_data[3][2])
         # Parse the multi-line widget
         mode_params = []
         lines = [
@@ -389,6 +414,8 @@ class ConventionalParametersDialog(wx.Dialog):
         self._device.sensorless_params["modes"] = mode_params
         self._device.sensorless_params["NA"] = widgets_data[1][2]
         self._device.sensorless_params["wavelength"] = widgets_data[2][2] * 1e-9
+        self._device.sensorless_params["metric"] = metric
+        self._device.sensorless_params["log_path"] = widgets_data[4][2]
         self._device.sensorless_params["save_as_datapoint"] = (
             self._checkbox_dp_save.GetValue()
         )

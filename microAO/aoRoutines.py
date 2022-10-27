@@ -90,6 +90,7 @@ class ConventionalRoutine(Routine):
             ),
             "datapoint_z": None,
             "save_as_datapoint": False,
+            "log_path": None
         }
 
         return parameters
