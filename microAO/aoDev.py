@@ -823,8 +823,20 @@ class AdaptiveOpticsDevice(Device):
         self.corrections[name]["actuator_values"] = actuator_values
 
     @Pyro4.expose
+    def remove_correction(self, name):
+        try:
+            del self.corrections[name]
+        except KeyError:
+            pass
+
+    @Pyro4.expose
     def toggle_correction(self, name, enable):
         self.corrections[name]["enabled"] = enable
+
+    @Pyro4.expose
+    def reset_corrections(self):
+        for correction in self.corrections:
+            correction["enabled"] = False
 
     @Pyro4.expose
     def sum_corrections(self, corrections=None, only_enabled=True):
